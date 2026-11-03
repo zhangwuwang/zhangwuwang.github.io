@@ -1,0 +1,6 @@
+1:"$Sreact.fragment"
+2:I[86739,["/_next/static/chunks/166m2o~n.xz3f.js","/_next/static/chunks/0a3hnoryqck5a.js","/_next/static/chunks/0r55phvf3mn69.js","/_next/static/chunks/0po482rkj.mxb.js","/_next/static/chunks/0vb4q2cqrjh66.js","/_next/static/chunks/010fvu0e5ra6..js","/_next/static/chunks/0z504qe~_e3ez.js"],"GamePage"]
+3:I[46608,["/_next/static/chunks/166m2o~n.xz3f.js","/_next/static/chunks/0a3hnoryqck5a.js","/_next/static/chunks/0r55phvf3mn69.js"],"OutletBoundary"]
+4:"$Sreact.suspense"
+0:{"rsc":["$","$1","c",{"children":[["$","$L2",null,{"showLanding":true}],[["$","script","script-0",{"src":"/_next/static/chunks/0po482rkj.mxb.js","async":true}],["$","script","script-1",{"src":"/_next/static/chunks/0vb4q2cqrjh66.js","async":true}],["$","script","script-2",{"src":"/_next/static/chunks/010fvu0e5ra6..js","async":true}],["$","script","script-3",{"src":"/_next/static/chunks/0z504qe~_e3ez.js","async":true}]],["$","$L3",null,{"children":["$","$4",null,{"name":"Next.MetadataOutlet","children":"$@5"}]}]]}],"isPartial":false,"staleTime":300,"varyParams":null,"buildId":"ZiUjTzIGMivpVvIa24tIU"}
+5:null
