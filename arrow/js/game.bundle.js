@@ -48,20 +48,31 @@ module.exports = {
   // 插屏：第 10 关以后，且距上次插屏至少 3 次胜利
   INTERSTITIAL_MIN_LEVEL: 11,
   INTERSTITIAL_EVERY_WINS: 3,
-  // 初始免费道具次数
-  FREE_ASSISTS: { hint: 3, undo: 2, remove: 2 },
+  // 初始免费道具次数（提示 / 锤子=移走任意一条线 / 炸弹=清除 3×3 内普通线 / 交换=把一条普通线首尾调头）
+  FREE_ASSISTS: { hint: 3, hammer: 2, bomb: 1, swap: 1 },
+  // ===== 金币经济（v4） =====
+  START_COINS: 200,
+  COINS: { win: [30, 45, 60], login: 50, daily: 100 }, // 通关按星级 1/2/3★；每日登录；每日挑战首次完成
+  PRICES: { hint: 100, hammer: 150, bomb: 200, swap: 150 }, // 道具金币价；重置免费
+  WIN_AD_DOUBLE: true,        // 胜利页「看广告翻倍」（每关一次）
+  REVIVE_HEARTS: 3,           // 心数用尽后看广告复活：恢复的心数（每关一次）
+  // 埋点：本地记录始终开启；设为 true 且在 mp 后台「自定义分析」配置同名事件后，才调用 wx.reportEvent 上报
+  ANALYTICS_WX: false,
   // 每关心数（撞线扣 1 颗）。大棋盘若觉得太严苛可调成 4 或 5，界面会自动适配
   HEARTS: 3,
   // 棋盘最大放大倍数（双指捏合 / 滚轮）
-  MAX_ZOOM: 3,
+  MAX_ZOOM: 3.5,
   SLIDE_SPEED: 25, // 格/秒（最低速度；长线/远距离会自动加速，保证 0.75 秒内飞出）
   TOTAL_LEVELS: 500,
   // ===== 每关倒计时（v3） =====
-  // 限时 = 取整到 5 秒( (基础 + 每条线秒数×线数 + 每轮秒数×移除轮数) × 关卡系数 )
+  // 限时 = 取整到 5 秒( (基础 + 线数×(每线秒数 + 每线每轮秒数×轮数) + 每轮秒数×轮数 + 每机关线秒数×机关线数) × 关卡系数 )
   TIMER_ENABLED: true,
-  TIMER_BASE: 30,            // 基础秒数
-  TIMER_PER_LINE: 2.0,       // 每条线（含思考）秒数
-  TIMER_PER_ROUND: 0.5,      // 每个“移除轮数”额外秒数（轮数越多越需要思考）
+  // v4 更密的盘（每盘 120–200 条短线）：中期约剩 25–45% 时间
+  TIMER_BASE: 20,            // 基础秒数
+  TIMER_PER_LINE: 1.85,      // 每条线（含思考）秒数
+  TIMER_PER_LINE_ROUND: 0.023, // 每条线再按“移除轮数”加秒（轮数越多每条线越需要思考）
+  TIMER_PER_ROUND: 0,        // 每个“移除轮数”额外秒数
+  TIMER_PER_MECH: 1.5,       // 每条机关线额外秒数
   TIMER_ROUND_TO: 5,         // 取整粒度（秒）
   TIMER_MIN: 45,             // 下限（第 1 关教学除外）
   TIMER_TUTORIAL_SECONDS: 0, // 第 1 关教学：0 = 不计时
@@ -73,10 +84,13 @@ module.exports = {
   TIMER_WARN_SECONDS: 10,    // 最后 N 秒变红、跳动、每秒“嗒”一声
   TIMER_REVIVE_SECONDS: 30,  // 看广告续时秒数
   TIMER_REVIVES_PER_LEVEL: 2,// 每关最多续时次数
+  // 三星 = 零失误 且 用时 ≤ 限时 × STAR_TIME_FRAC；前 STAR_NO_TIME_LEVELS 关不按用时扣星
+  STAR_TIME_FRAC: 0.75,
+  STAR_NO_TIME_LEVELS: 10,
   // 7 日签到奖励
   CHECKIN: [
-    { hint: 1 }, { remove: 1 }, { undo: 1 }, { hint: 2 },
-    { remove: 2 }, { undo: 2 }, { hint: 2, remove: 2, undo: 2 }
+    { hint: 1 }, { hammer: 1 }, { swap: 1 }, { hint: 2 },
+    { bomb: 1 }, { hammer: 2 }, { hint: 2, hammer: 2, bomb: 1, swap: 1 }
   ],
   SHARE_TITLE: '上古异兽被困箭阵，你能一箭破局吗？'
 };
@@ -84,46 +98,90 @@ module.exports = {
 };
 M["levelpick"]=function(module,exports,require){
 // 自动生成：tools/precompute.js（第 2..500 关选用的候选种子编号）
-module.exports = [0,5,0,6,3,1,3,5,2,5,6,2,5,5,4,2,3,6,4,3,0,3,5,1,5,6,0,2,6,0,7,6,2,0,5,0,0,6,7,5,0,0,2,2,0,6,1,1,3,7,1,0,6,5,4,2,4,0,4,5,1,2,0,1,0,3,0,7,7,7,3,5,1,4,2,2,1,0,0,7,4,2,1,4,4,5,5,3,5,7,1,5,1,0,7,1,6,4,5,0,4,3,5,4,0,1,1,2,5,0,6,6,6,0,4,7,1,7,1,0,3,4,7,5,0,2,0,6,4,3,7,1,7,3,4,2,3,5,7,2,3,0,2,6,5,1,0,4,5,7,4,3,2,2,1,5,2,1,6,3,3,0,4,0,1,5,6,3,5,2,2,4,0,4,7,1,1,5,3,3,3,4,2,1,0,5,1,0,2,1,4,2,0,7,4,0,6,1,6,2,6,5,4,3,5,0,4,4,4,5,0,7,5,2,2,3,0,4,0,3,5,7,4,5,3,1,1,4,0,1,1,2,0,3,3,4,6,4,7,1,4,5,6,0,2,3,4,2,6,1,2,2,1,0,6,7,3,2,7,0,7,2,0,3,3,4,4,7,2,4,0,6,5,2,3,1,5,7,5,0,1,1,0,1,5,6,4,3,1,3,7,4,3,4,4,2,3,3,0,0,0,5,6,4,2,1,2,6,7,0,4,3,4,4,4,1,2,2,2,6,3,0,0,4,1,6,0,6,4,0,1,2,0,0,2,2,2,3,1,4,4,4,7,7,7,7,1,0,5,1,0,7,0,2,3,4,5,3,1,2,0,5,1,1,0,7,6,7,4,5,1,7,4,1,7,6,4,0,3,6,0,7,5,7,2,3,4,3,3,2,4,5,4,5,7,0,6,0,6,0,4,2,7,5,3,4,0,0,2,5,5,3,3,6,0,5,4,2,2,5,3,1,6,1,0,5,4,3,2,0,5,2,4,2,2,1,1,3,4,5,0,6,0,0,7,7,0,1,4,1,4,1,4,7,3,5,0,4,3,1,5,5,1,0,1,2,0,0,6,1,3,2,3,2,4,3,2,6,2,1,4,2,1,0,3,5,0,5,5,0,1,3,7,1,0,5,0,7,7];
+module.exports = [2,1,2,4,4,2,5,2,0,3,1,0,2,0,1,3,1,3,4,4,1,0,2,1,0,4,2,4,3,3,1,0,3,2,3,3,0,1,2,3,2,2,1,0,4,3,3,1,1,2,0,0,2,4,2,4,3,2,0,3,4,2,4,4,0,3,0,2,2,3,1,4,0,0,3,1,1,1,4,4,3,3,0,4,4,3,3,4,3,1,1,0,0,4,4,0,1,3,3,2,1,4,1,4,2,2,4,1,4,0,0,4,2,2,3,2,1,0,2,2,2,0,1,2,3,4,3,3,0,4,1,1,3,1,2,3,2,4,0,3,3,3,0,4,4,2,2,0,1,3,1,0,4,3,1,0,1,4,2,1,2,2,4,3,0,3,1,0,3,3,4,0,2,0,0,3,1,0,3,0,0,3,2,1,1,0,4,3,1,0,0,3,0,0,3,1,2,4,2,4,3,4,1,2,1,1,0,0,3,4,2,4,0,4,1,2,1,4,1,4,3,1,1,1,4,3,4,3,4,2,2,3,2,2,4,3,1,2,4,3,0,0,2,3,2,3,1,0,2,2,1,3,4,1,2,1,3,3,3,2,0,4,2,1,4,0,1,4,0,1,1,3,2,2,0,2,3,1,4,4,2,0,2,4,0,3,1,3,0,3,0,0,0,3,3,3,4,3,1,0,4,0,4,1,1,4,2,1,2,1,0,0,0,3,3,0,2,0,4,4,2,3,0,1,3,2,2,4,4,0,1,4,4,2,4,0,4,4,0,3,3,0,2,4,2,2,4,2,1,0,4,3,3,4,3,4,3,4,2,0,0,3,0,2,3,0,1,1,0,4,0,1,3,0,3,4,3,2,0,1,2,3,3,1,3,4,3,2,4,3,1,2,4,0,4,3,2,4,0,2,0,1,3,1,1,1,4,3,0,1,3,1,4,0,1,0,4,1,2,0,1,3,1,3,0,1,4,1,2,1,2,4,0,2,1,4,1,1,4,3,2,4,4,0,3,4,0,0,4,0,0,3,4,2,3,3,3,4,0,1,3,3,0,4,2,1,4,3,0,2,2,1,2,3,1,4,1,1,4,4,2,1,2,2,3,2,2,2,0,4,1,0,0,1,0,0,2,4,0];
 
 };
 M["levelgen"]=function(module,exports,require){
-// 关卡生成 + 求解/评级（v2：密集长折线）
+// 关卡生成 + 规则 + 求解/评级（v4：更密的短线 + 机关）
 // 棋盘 w x h；每条线是一条折线，cells[0] 为线尾，cells[len-1] 为箭头。
-// 点击后整条线沿箭头方向蛇形滑出；出射线（箭头沿方向到边界的格子）上有别的线就会撞上。
+// 点击后整条线沿出射方向蛇形滑出；出射线（箭头沿方向到边界的格子，经过传送门会跳到配对门继续）上有别的线就会撞上。
 //
-// 可解性保证：维护“阻挡依赖图”——A 的出射线上有 B 的格子，则 A 依赖 B（B 先走 A 才能走）。
-// 每放入/延长一条线都做增量环检测，图始终是有向无环图（DAG），按拓扑序移除即可清空棋盘。
-// 另外禁止出射线穿过自身（那样永远飞不出去）。
-// 思路参考：IcedSoul/minigame-everyday day-03-arrow 的“增量放置 + 环检测 + 防孤格 + 端点延长补洞”，
-// 此处为独立重写（该仓库未附许可证，未复制其代码）。
+// 可解性保证：
+// 1) 生成：维护“阻挡依赖图”（A 的出射线上有 B，则 A 依赖 B），每放入/延长一条线都做增量环检测，图始终无环 ⇒ 普通线一定可解。
+//    传送门在生成前预留格子，出射线按传送规则计算，因此同样纳入依赖图。
+// 2) 机关：所有机关都是“单调”的——移除任何线只会让局面变好（出射线更空、冰层更薄、钥匙取走后锁打开、炸弹/连锁只会额外移除线；
+//    双向线/旋转机关只是多出可选方向）。因此“可移除集合”只增不减，贪心逐轮移除到不动点即为精确判定：贪心清空 ⇔ 有解。
+//    冰封与锁会削弱可移除性，所以装饰后用同一个求解器验证，卡住的冰/锁会被降级或去掉，直到可解。
+// 思路参考：IcedSoul/minigame-everyday day-03-arrow 的“增量放置 + 环检测 + 防孤格 + 端点延长补洞”，此处为独立重写。
 var R = require('./rng');
 
-var DIRS = [[1, 0], [0, 1], [-1, 0], [0, -1]];
+var DIRS = [[1, 0], [0, 1], [-1, 0], [0, -1]]; // 右 下 左 上（顺时针）
+var PORTAL = 30000;
 
 function headDir(cells) {
   var n = cells.length, h = cells[n - 1], p = cells[n - 2];
   return [h[0] - p[0], h[1] - p[1]];
 }
+function dirIndex(d) { for (var i = 0; i < 4; i++) if (DIRS[i][0] === d[0] && DIRS[i][1] === d[1]) return i; return -1; }
 
-// 出射线上的格子索引列表
-function rayCells(w, h, cells) {
-  var d = headDir(cells), hd = cells[cells.length - 1];
-  var x = hd[0] + d[0], y = hd[1] + d[1], out = [];
-  while (x >= 0 && y >= 0 && x < w && y < h) { out.push(y * w + x); x += d[0]; y += d[1]; }
+// 传送门映射（格子 id → 配对格 id，或 -1）
+function pmapOf(board) {
+  if (board._pmap && board._pmap.length === board.w * board.h) return board._pmap;
+  var m = new Int32Array(board.w * board.h).fill(-1);
+  (board.portals || []).forEach(function (p) { m[p[0]] = p[1]; m[p[1]] = p[0]; });
+  try { Object.defineProperty(board, '_pmap', { value: m, enumerable: false, configurable: true, writable: true }); } catch (e) { board._pmap = m; }
+  return m;
+}
+
+// 从格子 (x,y) 出发沿 (dx,dy) 的出射线（不含起点）；经过传送门时跳到配对门继续（同方向）
+function traceRay(w, h, pmap, x, y, dx, dy) {
+  var out = [], guard = 0;
+  x += dx; y += dy;
+  while (x >= 0 && y >= 0 && x < w && y < h && guard++ < w * h * 2) {
+    var c = y * w + x;
+    out.push(c);
+    if (pmap && pmap[c] >= 0) { var p = pmap[c]; out.push(p); x = p % w; y = (p / w) | 0; }
+    x += dx; y += dy;
+  }
   return out;
 }
 
+// 兼容旧接口：无传送门、按箭头方向
+function rayCells(w, h, cells) {
+  var d = headDir(cells), hd = cells[cells.length - 1];
+  return traceRay(w, h, null, hd[0], hd[1], d[0], d[1]);
+}
+
 // ---------------- 生成器 ----------------
-// opt: minLen, maxLen, meanLen, turnP, hugP, bias(>0 偏好被挡/向内的线 → 依赖链更深), tries, maxCap
+// opt: minLen, maxLen, meanLen, turnP, hugP, bias(>0 偏好被挡/向内的线 → 依赖链更深), tries, maxCap, portals(对数)
 function generate(w, h, rng, opt) {
   var N = w * h;
   var occ = new Int16Array(N).fill(-1);
+  var pmap = new Int32Array(N).fill(-1), portals = [];
   var segs = [], deps = [], rays = [];
   var cover = []; for (var i = 0; i < N; i++) cover.push([]);   // cover[c]：出射线经过 c 的线
   var mark = new Int32Array(4096), stamp = 0, stack = [];
   var tmark = new Int32Array(4096), tstamp = 0;
-  var maxLen = opt.maxLen, cap = opt.maxCap || maxLen + 6;
+  var maxLen = opt.maxLen, cap = opt.maxCap || maxLen + 3;
+
+  // 预留传送门：成对、不同行不同列（避免射线来回循环）、离边至少 2 格、两门相距较远
+  for (var pp = 0; pp < (opt.portals || 0); pp++) {
+    for (var tr = 0; tr < 200; tr++) {
+      var ax = rng.int(2, w - 3), ay = rng.int(2, h - 3), bx = rng.int(2, w - 3), by = rng.int(2, h - 3);
+      if (ax === bx || ay === by || Math.abs(ax - bx) + Math.abs(ay - by) < (w + h) / 4) continue;
+      var a = ay * w + ax, b = by * w + bx, ok = true;
+      for (var q = 0; q < portals.length; q++) {
+        var o1 = portals[q][0], o2 = portals[q][1];
+        [o1, o2].forEach(function (o) {
+          var ox = o % w, oy = (o / w) | 0;
+          if (ox === ax || oy === ay || ox === bx || oy === by) ok = false;
+        });
+      }
+      if (!ok) continue;
+      portals.push([a, b]); pmap[a] = b; pmap[b] = a; occ[a] = PORTAL; occ[b] = PORTAL;
+      break;
+    }
+  }
 
   function ensure(n) { if (n >= mark.length) { var m = new Int32Array(mark.length * 2); m.set(mark); mark = m; var t = new Int32Array(tmark.length * 2); t.set(tmark); tmark = t; } }
 
@@ -143,7 +201,6 @@ function generate(w, h, rng, opt) {
   }
 
   // 评估一条候选线（cells 为 [id...]，末元素为箭头）。self: 若为延长已有线则传其编号
-  // 返回 {ray, blockers} 或 null
   var inPath = new Int32Array(N), pstamp = 0;
   function evaluate(ids, self, addedFrom) {
     var n = ids.length; if (n < 2) return null;
@@ -151,15 +208,13 @@ function generate(w, h, rng, opt) {
     var hx = hd % w, hy = (hd / w) | 0, dx = hx - pv % w, dy = hy - ((pv / w) | 0);
     pstamp++;
     for (var i = 0; i < n; i++) inPath[ids[i]] = pstamp;
-    var ray = [], blockers = [], x = hx + dx, y = hy + dy;
+    var ray = traceRay(w, h, portals.length ? pmap : null, hx, hy, dx, dy), blockers = [];
     tstamp++;
-    while (x >= 0 && y >= 0 && x < w && y < h) {
-      var c = y * w + x;
+    for (var r = 0; r < ray.length; r++) {
+      var c = ray[r];
       if (inPath[c] === pstamp) return null;          // 出射线穿过自身
-      ray.push(c);
       var o = occ[c];
-      if (o >= 0 && o !== self && tmark[o] !== tstamp) { tmark[o] = tstamp; blockers.push(o); }
-      x += dx; y += dy;
+      if (o >= 0 && o !== PORTAL && o !== self && tmark[o] !== tstamp) { tmark[o] = tstamp; blockers.push(o); }
     }
     // 目标集合：会依赖这条线的线（出射线经过新增格子的）以及它自己
     tstamp++;
@@ -183,7 +238,6 @@ function generate(w, h, rng, opt) {
     segs.push(ids); deps.push(ev.blockers); rays.push(ev.ray);
     return si;
   }
-  // 延长已有线 si：newIds 为新的完整格子序列，added 为新增格子
   function commitExtend(si, newIds, added, ev, headChanged) {
     if (headChanged) {
       var old = rays[si];
@@ -214,7 +268,6 @@ function generate(w, h, rng, opt) {
     if (y > 0) out.push([c - w, 3]);
     return out;
   }
-  // 放入 c 是否会让某个空邻格变成孤格
   function isolates(c, ps) {
     var nb = nbs(c);
     for (var i = 0; i < nb.length; i++) {
@@ -228,12 +281,10 @@ function generate(w, h, rng, opt) {
   function pickLen() {
     var r = rng.next();
     if (r < opt.shortP) return rng.int(2, 3);
-    // 偏长分布：均值 meanLen
     var u = (rng.next() + rng.next() + rng.next()) / 3;
     return Math.max(opt.minLen, Math.min(maxLen, Math.round(opt.minLen + u * 2 * (opt.meanLen - opt.minLen))));
   }
 
-  // 随机游走生成一条折线（格子 id 列表）
   function walk(start, len) {
     pstamp++; var ps = pstamp;
     var path = [start]; inPath[start] = ps;
@@ -247,7 +298,6 @@ function generate(w, h, rng, opt) {
       if (safe.length) cand = safe;
       var ch = null;
       if (rng.next() < opt.hugP) {
-        // 贴边/贴线走：选空邻格最少的方向（形成回环、螺旋）
         var best = 9;
         for (var a = 0; a < cand.length; a++) { var f = freeNb(cand[a][0], ps) + rng.next() * 0.9; if (f < best) { best = f; ch = cand[a]; } }
       } else {
@@ -269,7 +319,6 @@ function generate(w, h, rng, opt) {
       if (p.length < minLen) continue;
       for (var o = 0; o < 2; o++) {
         var ids = o ? p.slice().reverse() : p;
-        // 不行就从箭头端逐步截短
         for (var cut = 0; cut <= 2 && ids.length - cut >= minLen; cut++) {
           var cand = cut ? ids.slice(0, ids.length - cut) : ids;
           var ev = evaluate(cand, -1, 0);
@@ -284,16 +333,14 @@ function generate(w, h, rng, opt) {
     return false;
   }
 
-  // 把空格 c 接到相邻线的尾或头上
   function tryExtend(c) {
     var nb = rng.shuffle(nbs(c)), opts = [];
     for (var i = 0; i < nb.length; i++) {
-      var q = nb[i][0], si = occ[q]; if (si < 0) continue;
+      var q = nb[i][0], si = occ[q]; if (si < 0 || si === PORTAL) continue;
       var ids = segs[si]; if (ids.length >= cap) continue;
       if (ids[0] === q) opts.push([si, 0]);
       if (ids[ids.length - 1] === q) opts.push([si, 1]);
     }
-    // 优先延长线尾（出射线不变），且优先较短的线
     opts.sort(function (a, b) { return (a[1] - b[1]) * 10 + (segs[a[0]].length - segs[b[0]].length) * 0.1; });
     for (var k = 0; k < opts.length; k++) {
       var s = opts[k][0], old = segs[s], nids;
@@ -303,7 +350,6 @@ function generate(w, h, rng, opt) {
     return false;
   }
 
-  // 起点顺序：随机，略偏向四周（四周的线更容易有出口）
   var order = [];
   for (var c0 = 0; c0 < N; c0++) {
     var x0 = c0 % w, y0 = (c0 / w) | 0;
@@ -316,7 +362,6 @@ function generate(w, h, rng, opt) {
     if (occ[st] >= 0) continue;
     tryPlace(st, pickLen(), Math.min(opt.minLen, 4));
   }
-  // 补洞：先延长邻线，再放短线，再延长
   for (var pass = 0; pass < 3; pass++) {
     var left = 0;
     for (var c1 = 0; c1 < N; c1++) if (occ[c1] < 0 && !tryExtend(c1)) left++;
@@ -327,16 +372,10 @@ function generate(w, h, rng, opt) {
 
   var out = [];
   for (var s2 = 0; s2 < segs.length; s2++) out.push({ cells: segs[s2].map(function (id) { return [id % w, (id / w) | 0]; }) });
-  return { w: w, h: h, segs: out };
+  return { w: w, h: h, segs: out, portals: portals };
 }
 
-// 按当前占用判断某线是否可直接飞出
-function isFree(board, occ, si) {
-  var ray = rayCells(board.w, board.h, board.segs[si].cells);
-  for (var r = 0; r < ray.length; r++) if (occ[ray[r]] >= 0 && occ[ray[r]] !== si) return false;
-  return true;
-}
-
+// ---------------- 规则（运行时与求解器共用） ----------------
 function buildOcc(board, alive) {
   var occ = new Int16Array(board.w * board.h).fill(-1);
   for (var i = 0; i < board.segs.length; i++) {
@@ -347,52 +386,272 @@ function buildOcc(board, alive) {
   return occ;
 }
 
-// 贪心逐轮移除（每轮移走所有当前可出的线）：可解性 + 难度
-function grade(board) {
-  var n = board.segs.length, w = board.w, hh = board.h;
-  var occ = buildOcc(board), rays = [], alive = [], left = n, layers = 0, frees = [], order = [];
-  for (var i = 0; i < n; i++) { rays.push(rayCells(w, hh, board.segs[i].cells)); alive.push(true); }
-  while (left > 0) {
-    var free = [];
-    for (var s = 0; s < n; s++) {
-      if (!alive[s]) continue;
-      var ok = true, r = rays[s];
-      for (var k = 0; k < r.length; k++) if (occ[r[k]] >= 0) { ok = false; break; }
-      if (ok) free.push(s);
-    }
-    if (!free.length) return { solvable: false, layers: layers, n: n };
-    for (var f = 0; f < free.length; f++) {
-      var si = free[f]; alive[si] = false; order.push(si);
-      var cl = board.segs[si].cells; for (var j = 0; j < cl.length; j++) occ[cl[j][1] * w + cl[j][0]] = -1;
-    }
-    left -= free.length; frees.push(free.length); layers++;
+// 相邻线（有一条边相邻）
+function adjOf(board) {
+  if (board._adj && board._adj.length === board.segs.length) return board._adj;
+  var occ = buildOcc(board), n = board.segs.length, sets = [], w = board.w;
+  for (var i = 0; i < n; i++) sets.push({});
+  for (var y = 0; y < board.h; y++) for (var x = 0; x < w; x++) {
+    var a = occ[y * w + x]; if (a < 0) continue;
+    if (x + 1 < w) { var b = occ[y * w + x + 1]; if (b >= 0 && b !== a) { sets[a][b] = 1; sets[b][a] = 1; } }
+    if (y + 1 < board.h) { var c = occ[(y + 1) * w + x]; if (c >= 0 && c !== a) { sets[a][c] = 1; sets[c][a] = 1; } }
   }
-  var cov = 0, lens = [], long6 = 0;
-  for (var q = 0; q < n; q++) { var L = board.segs[q].cells.length; cov += L; lens.push(L); if (L >= 6) long6++; }
+  var adj = sets.map(function (s) { return Object.keys(s).map(Number); });
+  try { Object.defineProperty(board, '_adj', { value: adj, enumerable: false, configurable: true, writable: true }); } catch (e) { board._adj = adj; }
+  return adj;
+}
+
+function isPlain(seg) { return !seg.ice && seg.lock == null && seg.key == null && !seg.bi && !seg.rot && !seg.bomb && seg.chain == null; }
+function mechOf(seg) {
+  if (seg.ice) return 'ice';
+  if (seg.lock != null) return 'lock';
+  if (seg.key != null) return 'key';
+  if (seg.bi) return 'bi';
+  if (seg.rot) return 'rot';
+  if (seg.bomb) return 'bomb';
+  if (seg.chain != null) return 'chain';
+  return null;
+}
+
+// 旋转机关可选方向（不能朝自己身体倒退）
+function rotDirs(seg) {
+  var cl = seg.cells, L = cl.length, hd = cl[L - 1], pv = cl[L - 2], out = [];
+  for (var i = 0; i < 4; i++) if (!(hd[0] + DIRS[i][0] === pv[0] && hd[1] + DIRS[i][1] === pv[1])) out.push(i);
+  return out;
+}
+
+// 运行状态：alive / ice（剩余冰层）/ rdir（旋转机关当前方向）
+function initState(board) {
+  var n = board.segs.length, s = { alive: [], ice: [], rdir: [], left: n };
+  for (var i = 0; i < n; i++) {
+    var sg = board.segs[i];
+    s.alive.push(true); s.ice.push(sg.ice || 0);
+    s.rdir.push(sg.rot ? (sg.rdir != null ? sg.rdir : dirIndex(headDir(sg.cells))) : -1);
+  }
+  s.occ = buildOcc(board, s.alive);
+  return s;
+}
+function cloneState(s) { return { alive: s.alive.slice(), ice: s.ice.slice(), rdir: s.rdir.slice(), left: s.left, occ: new Int16Array(s.occ) }; }
+
+// 某条线的某个出射选项：'head'（默认）、'tail'（双向线反向）、'r0'..'r3'（旋转机关指定方向）
+// 返回 { track: 按运动顺序的格子(尾→头), dir: [dx,dy], ray: 出射线格子 id }
+function exitOf(board, si, opt, state) {
+  var seg = board.segs[si], cl = seg.cells, d;
+  if (opt === 'tail') { cl = cl.slice().reverse(); d = headDir(cl); }
+  else if (opt && opt.charAt(0) === 'r') d = DIRS[+opt.charAt(1)];
+  else if (seg.rot && state && state.rdir[si] >= 0) d = DIRS[state.rdir[si]];
+  else d = headDir(cl);
+  var hd = cl[cl.length - 1];
+  return { track: cl, dir: d, ray: traceRay(board.w, board.h, board.portals && board.portals.length ? pmapOf(board) : null, hd[0], hd[1], d[0], d[1]) };
+}
+// 当前（玩家视角）可尝试的出射选项
+function optionsOf(board, si, state, all) {
+  var seg = board.segs[si];
+  if (seg.bi) return ['head', 'tail'];
+  if (seg.rot) return all ? rotDirs(seg).map(function (i) { return 'r' + i; }) : ['r' + state.rdir[si]];
+  return ['head'];
+}
+// 第一处阻挡在出射线上的下标（-1 = 畅通）
+function blockIndex(ex, occ, si) {
+  for (var r = 0; r < ex.ray.length; r++) { var o = occ[ex.ray[r]]; if (o >= 0 && o !== si) return r; }
+  return -1;
+}
+// 能否点击（冰封未破 / 上锁 时不可点）
+function tapBlock(board, state, si) {
+  if (state.ice[si] > 0) return 'ice';
+  var lk = board.segs[si].lock;
+  if (lk != null && state.alive[lk]) return 'lock';
+  return null;
+}
+// 求解器视角：能否移除（任一可选方向畅通）。返回可用选项或 null
+function removableOpt(board, state, si, all) {
+  if (!state.alive[si] || tapBlock(board, state, si)) return null;
+  var ops = optionsOf(board, si, state, all);
+  for (var k = 0; k < ops.length; k++) { var ex = exitOf(board, si, ops[k], state); if (blockIndex(ex, state.occ, si) < 0) return ops[k]; }
+  return null;
+}
+
+// 移除一条线并结算机关效果。cause: 'exit'（飞出）| 'tool'（道具）。返回 [{i, why}]（why: self/bomb/chain）
+function removeLine(board, state, si, cause) {
+  var out = [], queue = [[si, 'self']], adj = adjOf(board);
+  while (queue.length) {
+    var q = queue.shift(), i = q[0];
+    if (!state.alive[i]) continue;
+    state.alive[i] = false; state.left--;
+    var cl = board.segs[i].cells;
+    for (var j = 0; j < cl.length; j++) { var c = cl[j][1] * board.w + cl[j][0]; if (state.occ[c] === i) state.occ[c] = -1; }
+    out.push({ i: i, why: q[1] });
+    var nb = adj[i];
+    for (var k = 0; k < nb.length; k++) if (state.alive[nb[k]] && state.ice[nb[k]] > 0) state.ice[nb[k]]--;
+    var seg = board.segs[i];
+    // 连锁：连带拉出搭档
+    if (seg.chain != null && state.alive[seg.chain]) queue.push([seg.chain, 'chain']);
+    // 炸弹：飞出时炸开 3×3 范围内的普通线
+    if (seg.bomb && cause === 'exit' && q[1] === 'self') {
+      var bc = bombCenter(seg), victims = [];
+      for (var dy = -1; dy <= 1; dy++) for (var dx = -1; dx <= 1; dx++) {
+        var x = bc[0] + dx, y = bc[1] + dy; if (x < 0 || y < 0 || x >= board.w || y >= board.h) continue;
+        var o = state.occ[y * board.w + x]; if (o >= 0 && victims.indexOf(o) < 0 && isPlain(board.segs[o])) victims.push(o);
+      }
+      victims.forEach(function (v) { queue.push([v, 'bomb']); });
+    }
+  }
+  return out;
+}
+function bombCenter(seg) { return seg.cells[Math.floor(seg.cells.length / 2)]; }
+// 3×3 范围（道具炸弹）内允许清除的线：普通线
+function bombVictims(board, state, cx, cy) {
+  var v = [];
+  for (var dy = -1; dy <= 1; dy++) for (var dx = -1; dx <= 1; dx++) {
+    var x = cx + dx, y = cy + dy; if (x < 0 || y < 0 || x >= board.w || y >= board.h) continue;
+    var o = state.occ[y * board.w + x]; if (o >= 0 && v.indexOf(o) < 0 && isPlain(board.segs[o])) v.push(o);
+  }
+  return v;
+}
+
+// 贪心逐轮求解（单调系统下精确）：每轮移走所有当前可出的线（含机关效果）
+function solve(board, state0) {
+  var s = state0 ? cloneState(state0) : initState(board), n = board.segs.length, layers = 0, frees = [], order = [];
+  while (s.left > 0) {
+    var free = [];
+    for (var i = 0; i < n; i++) { if (!s.alive[i]) continue; var op = removableOpt(board, s, i, true); if (op) free.push([i, op]); }
+    if (!free.length) return { solvable: false, layers: layers, n: n, state: s, frees: frees, order: order };
+    var cnt = 0;
+    for (var f = 0; f < free.length; f++) {
+      if (!s.alive[free[f][0]]) continue;
+      order.push(free[f]);
+      cnt += removeLine(board, s, free[f][0], 'exit').length;
+    }
+    frees.push(free.length); layers++;
+  }
+  return { solvable: true, layers: layers, n: n, frees: frees, order: order, state: s };
+}
+
+function grade(board) {
+  var r = solve(board), n = board.segs.length, w = board.w, hh = board.h;
+  if (!r.solvable) return { solvable: false, layers: r.layers, n: n, stuck: r.state };
+  var cov = 0, lens = [], long6 = 0, mech = 0;
+  for (var q = 0; q < n; q++) { var L = board.segs[q].cells.length; cov += L; lens.push(L); if (L >= 6) long6++; if (mechOf(board.segs[q])) mech++; }
   var avgLen = cov / n;
   cov /= (w * hh);
-  var avgFree = n / layers;
-  var D = layers * 1.0 + (6 - Math.min(6, avgFree)) * 1.5 + n * 0.04;
-  return { solvable: true, layers: layers, n: n, avgFree: avgFree, firstFree: frees[0], coverage: cov, avgLen: avgLen, longFrac: long6 / n, maxLen: Math.max.apply(0, lens), D: D, order: order };
+  var avgFree = n / r.layers;
+  return { solvable: true, layers: r.layers, n: n, avgFree: avgFree, firstFree: r.frees[0], coverage: cov, avgLen: avgLen, longFrac: long6 / n, maxLen: Math.max.apply(0, lens), mech: mech, order: r.order.map(function (o) { return o[0]; }) };
+}
+// 兼容：按当前占用判断普通方向是否可出
+function isFree(board, occ, si) {
+  var ex = exitOf(board, si, 'head', null);
+  return blockIndex(ex, occ, si) < 0;
+}
+
+// ---------------- 机关装饰 ----------------
+var MECHS = [['ice', 11], ['lock', 16], ['bi', 21], ['rot', 31], ['portal', 41], ['bomb', 51], ['chain', 61]];
+var MECH_NAME = { ice: '冰封', lock: '锁与钥匙', bi: '双向', rot: '旋转机关', portal: '传送门', bomb: '炸弹', chain: '连锁' };
+function mechStart(m) { for (var i = 0; i < MECHS.length; i++) if (MECHS[i][0] === m) return MECHS[i][1]; return 1e9; }
+// 第 n 关使用的机关：首次出现的 5 关内只有新机关（+普通线）；之后本章新机关+一种旧机关；71 关起两种已学机关组合
+function mechsFor(n) {
+  var learned = MECHS.filter(function (m) { return m[1] <= n; }).map(function (m) { return m[0]; });
+  if (!learned.length) return [];
+  var newest = learned[learned.length - 1];
+  if (n < mechStart(newest) + 5) return [newest];
+  var prev = learned.slice(0, -1);
+  if (n < 71) return prev.length ? [newest, prev[n % prev.length]] : [newest];
+  var h = R.hashStr('mix-' + n), a = learned[h % learned.length], b = learned[(h >>> 4) % learned.length];
+  if (a === b) b = learned[(learned.indexOf(a) + 1 + ((h >>> 9) % (learned.length - 1))) % learned.length];
+  return [a, b];
+}
+
+function decorate(board, mechs, rng, opt) {
+  opt = opt || {};
+  var n = board.segs.length, segs = board.segs, f = n / 150 * (mechs.length > 1 ? 0.7 : 1), intro = !!opt.intro;
+  var used = {};
+  function pool(pred) { var a = []; for (var i = 0; i < n; i++) if (!used[i] && isPlain(segs[i]) && pred(segs[i], i)) a.push(i); return rng.shuffle(a); }
+  function cnt(base) { return Math.max(intro ? 2 : 2, Math.round(base * f * (intro ? 0.6 : 1))); }
+  var adj = adjOf(board);
+  var base = grade(board); // 普通移除顺序（用于挑“有意义”的位置）
+  var round = new Int32Array(n);
+  if (base.solvable) { var rr = solve(board); var k = 0; rr.frees.forEach(function (c, li) { for (var j = 0; j < c; j++) { var it = rr.order[k++]; if (it) round[it[0]] = li; } }); }
+  mechs.forEach(function (m) {
+    if (m === 'portal') return; // 生成时已预留
+    if (m === 'ice') {
+      // 冰封：放在中后期移除的线上（周围先走的邻线多，能破冰）
+      var p = pool(function (s, i) { return s.cells.length >= 3 && round[i] >= 2 && adj[i].length >= 3; });
+      p.slice(0, cnt(10)).forEach(function (i) {
+        var early = adj[i].filter(function (j) { return round[j] < round[i]; }).length;
+        var v = Math.max(1, Math.min(intro ? 1 : 3, early - 1, 1 + Math.floor(rng.next() * 3)));
+        segs[i].ice = v; used[i] = 1;
+      });
+    } else if (m === 'lock') {
+      // 锁+钥匙：钥匙在锁之前（求解顺序上）被移除；两者不相邻也可
+      var locks = pool(function (s, i) { return round[i] >= 3; }), keys = pool(function (s, i) { return true; });
+      var made = 0, want = cnt(5);
+      for (var a = 0; a < locks.length && made < want; a++) {
+        var L = locks[a]; if (used[L]) continue;
+        var cands = keys.filter(function (k2) { return !used[k2] && k2 !== L && round[k2] < round[L] && round[k2] >= Math.max(0, round[L] - 6); });
+        if (!cands.length) continue;
+        var K = cands[0];
+        segs[L].lock = K; segs[K].key = L; segs[L].pair = segs[K].pair = made; used[L] = used[K] = 1; made++;
+      }
+    } else if (m === 'bi') {
+      // 双向：反向出射线不穿过自己，且尾端的阻挡线在普通求解顺序里比本线更早走（尾端会成为真正的捷径）
+      var occ0 = buildOcc(board), pm0 = board.portals && board.portals.length ? pmapOf(board) : null, scored = [];
+      pool(function (s) { return s.cells.length >= 3; }).forEach(function (i) {
+        var s = segs[i], cl = s.cells.slice().reverse(), d = headDir(cl), hd = cl[cl.length - 1];
+        var ray = traceRay(board.w, board.h, pm0, hd[0], hd[1], d[0], d[1]), ready = 0;
+        for (var r = 0; r < ray.length; r++) { var o = occ0[ray[r]]; if (o === i) return; if (o >= 0) ready = Math.max(ready, round[o] + 1); }
+        if (ready < round[i]) scored.push([i, round[i] - ready + rng.next()]);
+      });
+      scored.sort(function (x, y) { return y[1] - x[1]; });
+      scored.slice(0, cnt(9)).forEach(function (q) { segs[q[0]].bi = true; used[q[0]] = 1; });
+    } else if (m === 'rot') {
+      // 旋转机关：箭头处的转盘，初始朝向随机（多数不是原方向，需要先转）
+      var pr = pool(function (s) { return s.cells.length >= 3; });
+      pr.slice(0, cnt(7)).forEach(function (i) {
+        var ds = rotDirs(segs[i]), nat = dirIndex(headDir(segs[i].cells)), others = ds.filter(function (d) { return d !== nat; });
+        segs[i].rot = true; segs[i].rdir = rng.next() < 0.8 ? others[rng.int(0, others.length - 1)] : nat; used[i] = 1;
+      });
+    } else if (m === 'bomb') {
+      var pbm = pool(function (s, i) { return s.cells.length >= 3 && round[i] <= Math.max(2, base.layers * 0.6); });
+      pbm.slice(0, cnt(4)).forEach(function (i) { segs[i].bomb = true; used[i] = 1; });
+    } else if (m === 'chain') {
+      // 连锁：两条相邻的普通线锁链相连，飞走一条会连带拉出另一条
+      var pc = pool(function (s, i) { return s.cells.length >= 3; }), made2 = 0, want2 = cnt(4);
+      for (var c = 0; c < pc.length && made2 < want2; c++) {
+        var A = pc[c]; if (used[A]) continue;
+        var bs = adj[A].filter(function (j) { return !used[j] && isPlain(segs[j]) && segs[j].cells.length >= 3; });
+        if (!bs.length) continue;
+        var B = bs[rng.int(0, bs.length - 1)];
+        segs[A].chain = B; segs[B].chain = A; segs[A].pair = segs[B].pair = made2; used[A] = used[B] = 1; made2++;
+      }
+    }
+  });
+  // 验证 + 修复：卡住的冰降级、卡住的锁拆掉，直到可解
+  for (var it = 0; it < 30; it++) {
+    var r = solve(board);
+    if (r.solvable) return true;
+    var s = r.state, fixed = false;
+    for (var i = 0; i < n; i++) {
+      if (!s.alive[i]) continue;
+      if (s.ice[i] > 0) { segs[i].ice = Math.max(0, segs[i].ice - s.ice[i]); if (!segs[i].ice) delete segs[i].ice; fixed = true; }
+      var lk = segs[i].lock;
+      if (lk != null && s.alive[lk]) { delete segs[lk].key; delete segs[lk].pair; delete segs[i].lock; delete segs[i].pair; fixed = true; }
+    }
+    if (!fixed) break;
+  }
+  // 兜底：去掉全部冰与锁（普通线 DAG 必然可解）
+  segs.forEach(function (s) { delete s.ice; delete s.lock; delete s.key; });
+  return solve(board).solvable;
 }
 
 // 上色：相邻线尽量不同色（8 色）
 var NCOLORS = 8;
 function colorize(board, rng) {
-  var n = board.segs.length, occ = buildOcc(board), adj = [];
-  for (var i = 0; i < n; i++) adj.push({});
-  for (var y = 0; y < board.h; y++) for (var x = 0; x < board.w; x++) {
-    var a = occ[y * board.w + x];
-    if (a < 0) continue;
-    if (x + 1 < board.w) { var b = occ[y * board.w + x + 1]; if (b >= 0 && b !== a) { adj[a][b] = 1; adj[b][a] = 1; } }
-    if (y + 1 < board.h) { var c = occ[(y + 1) * board.w + x]; if (c >= 0 && c !== a) { adj[a][c] = 1; adj[c][a] = 1; } }
-  }
+  var n = board.segs.length, adj = adjOf(board);
   var base = []; for (var k0 = 0; k0 < NCOLORS; k0++) base.push(k0);
   for (var s = 0; s < n; s++) {
     var cand = rng.shuffle(base.slice()), best = cand[0], bestBad = 99;
     for (var k = 0; k < NCOLORS; k++) {
       var bad = 0;
-      for (var nb in adj[s]) if (board.segs[nb].color === cand[k]) bad++;
+      for (var j = 0; j < adj[s].length; j++) if (board.segs[adj[s][j]].color === cand[k]) bad++;
       if (bad < bestBad) { bestBad = bad; best = cand[k]; }
     }
     board.segs[s].color = best;
@@ -403,61 +662,61 @@ function colorize(board, rng) {
 function lerp(a, b, t) { return a + (b - a) * Math.max(0, Math.min(1, t)); }
 function ease(t) { t = Math.max(0, Math.min(1, t)); return 1 - (1 - t) * (1 - t); }
 
-// 尺寸：L2 10x14 → L10 16x24 → L30 20x30 → L80+ 22x34
+// 尺寸：L2 14x20 → L10 20x30 → L30 26x40 → L80 起逐步到 L150 28x44
 function sizeFor(n) {
-  if (n <= 10) { var t = (n - 2) / 8; return [Math.round(lerp(10, 16, t)), Math.round(lerp(14, 24, t))]; }
-  if (n <= 30) { var t2 = (n - 10) / 20; return [Math.round(lerp(16, 20, t2)), Math.round(lerp(24, 30, t2))]; }
-  var t3 = (n - 30) / 50; return [Math.round(lerp(20, 22, t3)), Math.round(lerp(30, 34, t3))];
+  if (n <= 10) { var t = (n - 2) / 8; return [Math.round(lerp(14, 20, t)), Math.round(lerp(20, 30, t))]; }
+  if (n <= 30) { var t2 = (n - 10) / 20; return [Math.round(lerp(20, 26, t2)), Math.round(lerp(30, 40, t2))]; }
+  var t3 = (n - 80) / 70; return [Math.round(lerp(26, 28, t3)), Math.round(lerp(40, 44, t3))];
 }
 
 function paramsFor(n) {
   var sz = sizeFor(n), w = sz[0], h = sz[1];
-  var boss = (n % 10 === 0) && n > 5;     // 每 10 关为守关关：更难
-  var rest = (n % 10 === 1) && n > 10;    // 守关后的喘息关
-  var p = Math.min(1, n / 150);
+  var boss = (n % 10 === 0) && n > 5;
+  var rest = (n % 10 === 1) && n > 10;
+  var mechs = mechsFor(n);
   var opt = {
-    minLen: 4, maxLen: Math.round(lerp(14, 24, ease(n / 80))), meanLen: lerp(8, 12, ease(n / 80)),
-    shortP: 0.04, turnP: lerp(0.35, 0.5, p), hugP: lerp(0.3, 0.45, p),
-    bias: lerp(-2, 0.6, ease((n - 2) / 250)) + (boss ? 1.0 : 0) - (rest ? 1.0 : 0),
-    lenW: 0.35, tries: 6, edgeFirst: lerp(1.2, 0.3, ease(n / 80))
+    minLen: 4, maxLen: 11, meanLen: lerp(7, 7.2, n / 200), maxCap: 13,
+    shortP: 0.05, turnP: lerp(0.4, 0.5, n / 150), hugP: lerp(0.35, 0.45, n / 150),
+    bias: lerp(-2.5, -0.6, ease((n - 2) / 200)) + (boss ? 0.8 : 0) - (rest ? 0.8 : 0),
+    lenW: 0.35, tries: 6, edgeFirst: lerp(1.2, 0.6, ease(n / 80)),
+    portals: mechs.indexOf('portal') >= 0 ? (n < mechStart('portal') + 5 ? 1 : 2) : 0
   };
-  return { w: w, h: h, opt: opt, boss: boss, rest: rest };
+  return { w: w, h: h, opt: opt, boss: boss, rest: rest, mechs: mechs, intro: mechs.length === 1 && n === mechStart(mechs[0]) };
 }
 
-// 目标“移除轮数”：平滑但陡峭的上升曲线 + 守关/喘息波动
+// 目标“移除轮数”
 function targetRounds(n, p) {
   var base;
-  if (n <= 10) base = lerp(5, 12, (n - 2) / 8);
-  else if (n <= 30) base = lerp(12, 18, (n - 10) / 20);
-  else base = 18 + 17 * (1 - Math.exp(-(n - 30) / 120));
-  if (p.boss) base *= 1.2;
-  if (p.rest) base *= 0.85;
+  if (n <= 10) base = lerp(10, 22, (n - 2) / 8);
+  else if (n <= 30) base = lerp(24, 38, (n - 10) / 20);
+  else base = 38 + 22 * (1 - Math.exp(-(n - 30) / 150));
+  if (p.boss) base *= 1.15;
+  if (p.rest) base *= 0.88;
   return base;
 }
 function targetD(n, p) { return targetRounds(n, p); }
 
-// 预计算表：第 n 关选用的候选种子编号（由 tools/precompute.js 生成；运行时只需生成 1 次）
 var PICK = null;
 try { PICK = require('./levelpick'); } catch (e) { PICK = null; }
 
-function candidatesFor(n) { return 8; }
+function candidatesFor(n) { return n <= 10 ? 6 : 5; }
 
 function buildLevel(n, k) {
   var p = paramsFor(n);
-  var rng = R.makeRng('shanhai-arrow-v2-L' + n + '-' + k);
+  var rng = R.makeRng('shanhai-arrow-v4-L' + n + '-' + k);
   var b = generate(p.w, p.h, rng, p.opt);
+  if (p.mechs.length) decorate(b, p.mechs, R.makeRng('mech-v4-L' + n + '-' + k), { intro: p.intro });
+  b.mechs = p.mechs;
   b.grade = grade(b);
   return b;
 }
 
-// 在 K 个候选中选最接近目标轮数的（可解是前提；L2 至少 4 轮）
 function searchLevel(n) {
   var p = paramsFor(n), T = targetRounds(n, p), best = null, bestErr = 1e9, bestK = -1;
   var K = candidatesFor(n);
   for (var k = 0; k < K || (!best && k < 40); k++) {
     var b = buildLevel(n, k), g = b.grade;
     if (!g.solvable) continue;
-    if (n === 2 && g.layers < 4) continue;
     var err = Math.abs(g.layers - T) + (1 - g.coverage) * 40;
     if (err < bestErr) { bestErr = err; best = b; bestK = k; }
   }
@@ -466,13 +725,12 @@ function searchLevel(n) {
 }
 
 function makeTutorial() {
-  // 手工设计第 1 关：先点右向的线，再点被它挡住的线
   return {
-    w: 3, h: 3,
+    w: 3, h: 3, portals: [], mechs: [],
     segs: [
-      { cells: [[0, 0], [1, 0], [2, 0]], color: 0 },           // 第一排 → 直接飞出
-      { cells: [[0, 2], [0, 1], [1, 1]], color: 1 },           // L 形，箭头向右：被下面那支挡住
-      { cells: [[2, 2], [2, 1]], color: 6 }                    // 向上：被第一排挡住
+      { cells: [[0, 0], [1, 0], [2, 0]], color: 0 },
+      { cells: [[0, 2], [0, 1], [1, 1]], color: 1 },
+      { cells: [[2, 2], [2, 1]], color: 6 }
     ]
   };
 }
@@ -496,21 +754,29 @@ function getLevel(n) {
   return board;
 }
 
-function dailyParams() {
-  return { minLen: 5, maxLen: 20, meanLen: 10, shortP: 0.04, turnP: 0.5, hugP: 0.45, bias: 1.2, lenW: 0.35, tries: 6, edgeFirst: 0.3 };
+function dailyMechs(dateStr) {
+  var h = R.hashStr('dm-' + dateStr), all = ['ice', 'lock', 'bi', 'rot', 'portal', 'bomb', 'chain'];
+  var a = all[h % 7], b = all[(h >>> 3) % 7]; if (a === b) b = all[(all.indexOf(a) + 3) % 7];
+  return [a, b];
+}
+function dailyParams(mechs) {
+  return { minLen: 4, maxLen: 11, meanLen: 7.2, maxCap: 13, shortP: 0.05, turnP: 0.5, hugP: 0.45, bias: -0.3, lenW: 0.35, tries: 6, edgeFirst: 0.5, portals: mechs.indexOf('portal') >= 0 ? 2 : 0 };
 }
 function getDaily(dateStr) {
   var key = 'daily-' + dateStr;
   if (cache[key]) return cache[key];
-  var best = null, bestErr = 1e9;
-  // 每日挑战：22x34 大盘，目标约 40 轮（与守关关相当或更难）
-  for (var k = 0; k < 3 || (!best && k < 30); k++) {
-    var rng = R.makeRng(key + '-v2-' + k);
-    var b = generate(22, 34, rng, dailyParams()), g = grade(b);
+  var best = null, bestErr = 1e9, mechs = dailyMechs(dateStr);
+  // 每日挑战：28x44 大盘 + 两种机关，目标约 65 轮；只生成 1 个候选（手机上即时生成）
+  for (var k = 0; k < 1 || (!best && k < 30); k++) {
+    var rng = R.makeRng(key + '-v4-' + k);
+    var b = generate(28, 44, rng, dailyParams(mechs));
+    decorate(b, mechs, R.makeRng(key + '-mech-' + k));
+    var g = grade(b);
     if (!g.solvable) continue;
-    var err = Math.abs(g.layers - 40) + (1 - g.coverage) * 40;
+    var err = Math.abs(g.layers - 65) + (1 - g.coverage) * 40;
     if (err < bestErr) { bestErr = err; best = b; best.grade = g; }
   }
+  best.mechs = mechs;
   colorize(best, R.makeRng(key));
   best.id = 'daily';
   best.daily = dateStr;
@@ -518,10 +784,20 @@ function getDaily(dateStr) {
   return best;
 }
 
+// 深拷贝（游玩时可能“调头”改动线，不能污染缓存）
+function cloneBoard(b) {
+  var o = JSON.parse(JSON.stringify({ w: b.w, h: b.h, segs: b.segs, portals: b.portals || [], mechs: b.mechs || [] }));
+  o.grade = b.grade; o.id = b.id; o.boss = b.boss; o.daily = b.daily; o.pick = b.pick;
+  return o;
+}
+
 module.exports = {
-  DIRS: DIRS, headDir: headDir, rayCells: rayCells, generate: generate, grade: grade,
-  isFree: isFree, buildOcc: buildOcc, getLevel: getLevel, getDaily: getDaily, paramsFor: paramsFor,
-  targetD: targetD, targetRounds: targetRounds, searchLevel: searchLevel, buildLevel: buildLevel,
+  DIRS: DIRS, headDir: headDir, dirIndex: dirIndex, rayCells: rayCells, traceRay: traceRay, pmapOf: pmapOf, generate: generate, grade: grade, solve: solve,
+  isFree: isFree, buildOcc: buildOcc, adjOf: adjOf, getLevel: getLevel, getDaily: getDaily, paramsFor: paramsFor, sizeFor: sizeFor, mechsFor: mechsFor,
+  targetD: targetD, targetRounds: targetRounds, searchLevel: searchLevel, buildLevel: buildLevel, decorate: decorate, cloneBoard: cloneBoard,
+  initState: initState, cloneState: cloneState, exitOf: exitOf, optionsOf: optionsOf, blockIndex: blockIndex, tapBlock: tapBlock, removableOpt: removableOpt,
+  removeLine: removeLine, bombVictims: bombVictims, bombCenter: bombCenter, rotDirs: rotDirs, isPlain: isPlain, mechOf: mechOf,
+  MECHS: MECHS, MECH_NAME: MECH_NAME, mechStart: mechStart, dailyMechs: dailyMechs,
   NCOLORS: NCOLORS, TOTAL: 500
 };
 
@@ -663,6 +939,19 @@ P.load = function () {
 };
 P.save = function (obj) {
   try { var s = JSON.stringify(obj); if (isWx) wx.setStorageSync(KEY, s); else localStorage.setItem(KEY, s); } catch (e) {}
+};
+
+// 任意键存储（埋点日志等）
+P.loadKey = function (key) {
+  try { var s = isWx ? wx.getStorageSync(key) : localStorage.getItem(key); return s ? (typeof s === 'string' ? JSON.parse(s) : s) : null; } catch (e) { return null; }
+};
+P.saveKey = function (key, obj) {
+  try { var s = JSON.stringify(obj); if (isWx) wx.setStorageSync(key, s); else localStorage.setItem(key, s); } catch (e) {}
+};
+// 微信自定义分析上报（需在 mp 后台「数据分析 → 自定义分析」先配置事件；未配置或非微信环境时静默跳过）
+P.reportEvent = function (name, data) {
+  if (!isWx || typeof wx.reportEvent !== 'function') return false;
+  try { wx.reportEvent(name, data || {}); return true; } catch (e) { return false; }
 };
 
 // ---------- 图片 / 字体 / 分包 ----------
@@ -973,6 +1262,18 @@ M["timer"]=function(module,exports,require){
 // 每关倒计时：限时公式 + 纯逻辑计时器（无平台依赖，可在 Node 里单测）
 var CFG = require('./config');
 
+// 机关线数（冰封/锁/钥匙/双向/旋转/炸弹/连锁 + 每对传送门算 2）
+function mechCount(board) {
+  var m = 0;
+  for (var i = 0; i < board.segs.length; i++) { var s = board.segs[i]; if (s.ice || s.lock != null || s.key != null || s.bi || s.rot || s.bomb || s.chain != null) m++; }
+  return m + 2 * ((board.portals || []).length);
+}
+// 三星用时标准（秒）：限时 × STAR_TIME_FRAC；前 N 关不按用时扣星（返回 0 = 不要求）
+function starTimeFor(limit, n, daily) {
+  if (!limit) return 0;
+  if (!daily && n <= (CFG.STAR_NO_TIME_LEVELS || 0)) return 0;
+  return Math.round(limit * (CFG.STAR_TIME_FRAC || 0.7));
+}
 function roundTo(x, k) { k = k || 5; return Math.round(x / k) * k; }
 
 // 第 n 关（或每日挑战 daily=日期字符串）的限时秒数；0 = 不计时
@@ -980,8 +1281,8 @@ function limitFor(board, n, daily) {
   if (!CFG.TIMER_ENABLED) return 0;
   if (!daily && n === 1) return CFG.TIMER_TUTORIAL_SECONDS || 0;
   if (daily && CFG.TIMER_DAILY_SECONDS) return CFG.TIMER_DAILY_SECONDS;
-  var lines = board.segs.length, rounds = board.grade ? board.grade.layers || 0 : 0;
-  var raw = CFG.TIMER_BASE + CFG.TIMER_PER_LINE * lines + CFG.TIMER_PER_ROUND * rounds;
+  var lines = board.segs.length, rounds = board.grade ? board.grade.layers || 0 : 0, mech = mechCount(board);
+  var raw = CFG.TIMER_BASE + lines * (CFG.TIMER_PER_LINE + (CFG.TIMER_PER_LINE_ROUND || 0) * rounds) + CFG.TIMER_PER_ROUND * rounds + (CFG.TIMER_PER_MECH || 0) * mech;
   if (daily) raw *= CFG.TIMER_DAILY_MULT;
   else if (n % 10 === 0 && n > 5) raw *= CFG.TIMER_GUARDIAN_MULT;
   else if (n % 10 === 1 && n > 10) raw *= CFG.TIMER_REST_MULT;
@@ -1023,7 +1324,230 @@ function fmt(sec) {
   return (m < 10 ? '0' : '') + m + ':' + (s < 10 ? '0' : '') + s;
 }
 
-module.exports = { limitFor: limitFor, create: create, start: start, tick: tick, canRevive: canRevive, revive: revive, warn: warn, fmt: fmt, active: active };
+module.exports = { mechCount: mechCount, starTimeFor: starTimeFor, limitFor: limitFor, create: create, start: start, tick: tick, canRevive: canRevive, revive: revive, warn: warn, fmt: fmt, active: active };
+
+};
+M["analytics"]=function(module,exports,require){
+// 数据埋点：本地环形日志 + wx.reportEvent 占位（CFG.ANALYTICS_WX=true 且已在 mp 后台配置事件时才真正上报）
+// 事件：game_start, tutorial_step, level_start, arrow_tap, arrow_blocked, arrow_removed, hint_used,
+//       level_win, level_fail, level_retry, ad_offer, ad_reward_success, session_end
+var P = require('./platform');
+var CFG = require('./config');
+var KEY = 'shanhai_arrow_events_v1', MAX = 400;
+var log = null, dirty = 0, session = null;
+var EVENTS = ['game_start', 'tutorial_step', 'level_start', 'arrow_tap', 'arrow_blocked', 'arrow_removed', 'hint_used',
+  'level_win', 'level_fail', 'level_retry', 'ad_offer', 'ad_reward_success', 'session_end'];
+
+function load() { if (!log) { log = P.loadKey(KEY); if (!log || !log.events) log = { events: [], counts: {} }; } return log; }
+function flush() { if (log && dirty) { P.saveKey(KEY, log); dirty = 0; } }
+function track(name, data) {
+  load();
+  var e = { e: name, t: Date.now() };
+  if (data) for (var k in data) e[k] = data[k];
+  if (session) e.sid = session.id;
+  log.events.push(e);
+  if (log.events.length > MAX) log.events.splice(0, log.events.length - MAX);
+  log.counts[name] = (log.counts[name] || 0) + 1;
+  dirty++;
+  // 高频事件（点按/移除）批量落盘，其余立即落盘
+  if (name !== 'arrow_tap' && name !== 'arrow_removed' && name !== 'arrow_blocked' || dirty >= 30) flush();
+  if (CFG.ANALYTICS_WX) {
+    var flat = {}; for (var k2 in e) if (k2 !== 'e' && k2 !== 't' && (typeof e[k2] === 'number' || typeof e[k2] === 'string')) flat[k2] = e[k2];
+    P.reportEvent(name, flat);
+  }
+  return e;
+}
+function startSession() { session = { id: Date.now().toString(36), t0: Date.now() }; track('game_start'); }
+function endSession() { if (session) { track('session_end', { dur: Math.round((Date.now() - session.t0) / 1000) }); flush(); } }
+function recent(n) { load(); return log.events.slice(-(n || 50)); }
+function counts() { load(); return log.counts; }
+
+module.exports = { track: track, flush: flush, startSession: startSession, endSession: endSession, recent: recent, counts: counts, EVENTS: EVENTS };
+
+};
+M["glyphs"]=function(module,exports,require){
+// 代码绘制的国风小图标：机关（冰封/铜锁/玉钥/转盘/传送门/炸弹/锁链）与道具（锤子/炸弹/调头/重置）
+var Y = {};
+var PAIR_COLS = ['#F2C14E', '#7FD1E8', '#F28BB8', '#A3E07A', '#C9A0FF', '#FF9F68'];
+Y.PAIR_COLS = PAIR_COLS;
+Y.PORTAL_COLS = [['#B48CFF', '#5B2EA6'], ['#5FE0C8', '#147A6A'], ['#FFB25F', '#9A4B0B']];
+
+function circle(c, x, y, r) { c.beginPath(); c.arc(x, y, r, 0, Math.PI * 2); }
+
+// 冰封：半透明冰晶六角牌 + 剩余层数 + 裂纹（已破的层数越多裂纹越多）
+Y.ice = function (c, x, y, s, remain, total) {
+  var r = s * 0.42;
+  c.save();
+  c.beginPath();
+  for (var i = 0; i < 6; i++) { var a = Math.PI / 6 + i * Math.PI / 3; c[i ? 'lineTo' : 'moveTo'](x + Math.cos(a) * r, y + Math.sin(a) * r); }
+  c.closePath();
+  var g = c.createLinearGradient(x - r, y - r, x + r, y + r);
+  g.addColorStop(0, 'rgba(235,250,255,0.97)'); g.addColorStop(1, 'rgba(140,200,240,0.97)');
+  c.fillStyle = g; c.fill();
+  c.lineWidth = Math.max(1, s * 0.06); c.strokeStyle = '#2E6E9E'; c.stroke();
+  var cracks = Math.max(0, total - remain);
+  c.strokeStyle = 'rgba(30,80,120,0.85)'; c.lineWidth = Math.max(0.8, s * 0.035);
+  for (var k = 0; k < cracks; k++) {
+    var a0 = k * 2.1 + 0.4;
+    c.beginPath(); c.moveTo(x + Math.cos(a0) * r * 0.95, y + Math.sin(a0) * r * 0.95);
+    c.lineTo(x + Math.cos(a0 + 0.5) * r * 0.45, y + Math.sin(a0 + 0.5) * r * 0.45);
+    c.lineTo(x + Math.cos(a0 + 0.2) * r * 0.15, y + Math.sin(a0 + 0.2) * r * 0.15);
+    c.stroke();
+  }
+  c.fillStyle = '#123E63'; c.font = '900 ' + Math.round(s * 0.5) + 'px sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
+  c.fillText(String(remain), x, y + s * 0.03);
+  c.restore();
+};
+// 冰封线外的霜层（沿线描一层冰蓝）
+Y.frost = function (c, pathFn, w) {
+  c.save();
+  c.strokeStyle = 'rgba(200,236,255,0.75)'; c.lineWidth = w * 1.9; pathFn(); c.stroke();
+  c.strokeStyle = 'rgba(255,255,255,0.85)'; c.lineWidth = Math.max(1, w * 0.35); c.setLineDash([w * 0.9, w * 1.3]); pathFn(); c.stroke();
+  c.restore();
+};
+
+// 青铜锁（配对色描边）
+Y.lock = function (c, x, y, s, col) {
+  var w = s * 0.62, h = s * 0.48, top = y - h * 0.25;
+  c.save();
+  circle(c, x, y, s * 0.47); c.fillStyle = 'rgba(25,18,10,0.82)'; c.fill(); c.lineWidth = Math.max(1.2, s * 0.08); c.strokeStyle = col; c.stroke();
+  c.lineWidth = Math.max(1.2, s * 0.09); c.strokeStyle = '#C99A4B';
+  c.beginPath(); c.arc(x, top, w * 0.3, Math.PI, 0); c.stroke();
+  var g = c.createLinearGradient(0, top, 0, top + h); g.addColorStop(0, '#E3B866'); g.addColorStop(1, '#8A5A1E');
+  c.fillStyle = g; c.beginPath(); c.rect(x - w / 2, top, w, h); c.fill();
+  c.fillStyle = '#3A220C'; circle(c, x, top + h * 0.42, s * 0.06); c.fill(); c.fillRect(x - s * 0.025, top + h * 0.45, s * 0.05, h * 0.35);
+  c.restore();
+};
+// 玉钥匙
+Y.key = function (c, x, y, s, col) {
+  c.save();
+  circle(c, x, y, s * 0.47); c.fillStyle = 'rgba(25,18,10,0.82)'; c.fill(); c.lineWidth = Math.max(1.2, s * 0.08); c.strokeStyle = col; c.stroke();
+  c.translate(x, y); c.rotate(-Math.PI / 4);
+  var g = c.createLinearGradient(-s * 0.3, 0, s * 0.3, 0); g.addColorStop(0, '#B8F0C8'); g.addColorStop(1, '#3E9A62');
+  c.fillStyle = g; c.strokeStyle = g; c.lineWidth = Math.max(1.2, s * 0.09);
+  circle(c, -s * 0.17, 0, s * 0.13); c.fill();
+  c.fillStyle = 'rgba(25,18,10,0.9)'; circle(c, -s * 0.17, 0, s * 0.05); c.fill();
+  c.beginPath(); c.moveTo(-s * 0.05, 0); c.lineTo(s * 0.3, 0); c.stroke();
+  c.beginPath(); c.moveTo(s * 0.2, 0); c.lineTo(s * 0.2, s * 0.1); c.moveTo(s * 0.28, 0); c.lineTo(s * 0.28, s * 0.1); c.stroke();
+  c.restore();
+};
+
+// 旋转机关：青铜转盘（齿边），ang 为转动角
+Y.disc = function (c, x, y, s, ang) {
+  var r = s * 0.46;
+  c.save(); c.translate(x, y); c.rotate(ang || 0);
+  c.beginPath();
+  for (var i = 0; i < 16; i++) { var a = i * Math.PI / 8, rr = i % 2 ? r : r * 0.86; c[i ? 'lineTo' : 'moveTo'](Math.cos(a) * rr, Math.sin(a) * rr); }
+  c.closePath();
+  var g = c.createRadialGradient(0, -r * 0.3, r * 0.1, 0, 0, r); g.addColorStop(0, '#F3D27E'); g.addColorStop(1, '#8C5A16');
+  c.fillStyle = g; c.fill(); c.lineWidth = Math.max(1, s * 0.05); c.strokeStyle = '#3A220C'; c.stroke();
+  circle(c, 0, 0, r * 0.62); c.fillStyle = '#2B4A3C'; c.fill();
+  c.restore();
+};
+// 旋转提示弧形箭头（教学/高亮用）
+Y.rotArrow = function (c, x, y, r, col) {
+  c.save(); c.strokeStyle = col; c.fillStyle = col; c.lineWidth = Math.max(1.5, r * 0.18);
+  c.beginPath(); c.arc(x, y, r, -Math.PI * 0.9, Math.PI * 0.35); c.stroke();
+  var ax = x + Math.cos(Math.PI * 0.35) * r, ay = y + Math.sin(Math.PI * 0.35) * r;
+  c.beginPath(); c.moveTo(ax + r * 0.35, ay - r * 0.1); c.lineTo(ax - r * 0.25, ay + r * 0.35); c.lineTo(ax - r * 0.2, ay - r * 0.3); c.closePath(); c.fill();
+  c.restore();
+};
+
+// 传送门：同色一对，旋涡转动
+Y.portal = function (c, x, y, s, cols, t) {
+  var r = s * 0.46;
+  c.save();
+  var g = c.createRadialGradient(x, y, r * 0.1, x, y, r);
+  g.addColorStop(0, '#120A1E'); g.addColorStop(0.65, cols[1]); g.addColorStop(1, cols[0]);
+  circle(c, x, y, r); c.fillStyle = g; c.fill();
+  c.lineWidth = Math.max(1.2, s * 0.08); c.strokeStyle = cols[0]; c.stroke();
+  c.translate(x, y); c.rotate(t * 2.4);
+  c.strokeStyle = 'rgba(255,255,255,0.75)'; c.lineWidth = Math.max(1, s * 0.05);
+  for (var k = 0; k < 3; k++) { c.rotate(Math.PI * 2 / 3); c.beginPath(); c.arc(r * 0.18, 0, r * 0.5, -0.4, 1.6); c.stroke(); }
+  c.restore();
+};
+
+// 炸弹：黑铁弹 + 引信火星
+Y.bomb = function (c, x, y, s, t) {
+  var r = s * 0.3;
+  c.save();
+  circle(c, x, y, s * 0.47); c.fillStyle = 'rgba(25,18,10,0.82)'; c.fill(); c.lineWidth = Math.max(1.2, s * 0.08); c.strokeStyle = '#E8483A'; c.stroke();
+  var g = c.createRadialGradient(x - r * 0.4, y - r * 0.3, r * 0.1, x, y + r * 0.1, r);
+  g.addColorStop(0, '#8A8A96'); g.addColorStop(1, '#1A1A22');
+  circle(c, x, y + s * 0.05, r); c.fillStyle = g; c.fill();
+  c.strokeStyle = '#D9B26A'; c.lineWidth = Math.max(1, s * 0.06);
+  c.beginPath(); c.moveTo(x + r * 0.5, y - r * 0.6); c.quadraticCurveTo(x + r * 0.9, y - r * 1.2, x + r * 1.1, y - r * 1.05); c.stroke();
+  var f = 0.7 + 0.3 * Math.sin((t || 0) * 18);
+  c.fillStyle = 'rgba(255,200,80,' + f + ')'; circle(c, x + r * 1.15, y - r * 1.1, s * 0.08 * f + s * 0.03); c.fill();
+  c.restore();
+};
+
+// 锁链环（两节相扣），horiz 为链方向
+Y.chain = function (c, x, y, s, horiz) {
+  c.save(); c.translate(x, y); if (!horiz) c.rotate(Math.PI / 2);
+  var w = s * 0.34, h = s * 0.2;
+  c.lineWidth = Math.max(1.2, s * 0.09);
+  [[-w * 0.45, '#E6C068'], [w * 0.45, '#B8862E']].forEach(function (q) {
+    c.strokeStyle = '#2A1A08'; c.lineWidth = Math.max(2, s * 0.15);
+    c.beginPath(); c.ellipse ? c.ellipse(q[0], 0, w * 0.55, h * 0.75, 0, 0, Math.PI * 2) : c.arc(q[0], 0, w * 0.55, 0, Math.PI * 2); c.stroke();
+    c.strokeStyle = q[1]; c.lineWidth = Math.max(1.2, s * 0.09);
+    c.beginPath(); c.ellipse ? c.ellipse(q[0], 0, w * 0.55, h * 0.75, 0, 0, Math.PI * 2) : c.arc(q[0], 0, w * 0.55, 0, Math.PI * 2); c.stroke();
+  });
+  c.restore();
+};
+
+// 连锁线中段的徽记：暗底圆 + 配对色描边 + 锁链
+Y.chainBadge = function (c, x, y, s, col) {
+  c.save();
+  circle(c, x, y, s * 0.47); c.fillStyle = 'rgba(25,18,10,0.82)'; c.fill(); c.lineWidth = Math.max(1.2, s * 0.08); c.strokeStyle = col; c.stroke();
+  c.restore();
+  Y.chain(c, x, y, s * 0.95, true);
+};
+
+// ---------- 道具图标：玉盘 + 代码绘制的图形 ----------
+Y.jade = function (c, cx, cy, size) {
+  var r = size / 2;
+  c.save();
+  circle(c, cx, cy, r); var g = c.createLinearGradient(0, cy - r, 0, cy + r); g.addColorStop(0, '#F6D98C'); g.addColorStop(1, '#8C5A16'); c.fillStyle = g; c.fill();
+  c.lineWidth = 2; c.strokeStyle = '#4A2E0C'; c.stroke();
+  circle(c, cx, cy, r * 0.8); var g2 = c.createRadialGradient(cx - r * 0.2, cy - r * 0.3, r * 0.1, cx, cy, r * 0.8); g2.addColorStop(0, '#BFEBD3'); g2.addColorStop(1, '#3F7E62'); c.fillStyle = g2; c.fill();
+  c.lineWidth = 1.5; c.strokeStyle = 'rgba(40,30,10,0.6)'; c.stroke();
+  c.restore();
+};
+Y.itemGlyph = function (c, kind, cx, cy, size, t) {
+  var s = size;
+  c.save(); c.translate(cx, cy); c.lineCap = 'round'; c.lineJoin = 'round';
+  if (kind === 'hammer') {
+    c.rotate(-Math.PI / 4);
+    c.fillStyle = '#8A5A2B'; c.fillRect(-s * 0.05, -s * 0.05, s * 0.1, s * 0.42);
+    var g = c.createLinearGradient(-s * 0.22, 0, s * 0.22, 0); g.addColorStop(0, '#D7DCE4'); g.addColorStop(1, '#6E7684');
+    c.fillStyle = g; c.fillRect(-s * 0.22, -s * 0.2, s * 0.44, s * 0.17); c.lineWidth = 1.5; c.strokeStyle = '#2A2A30'; c.strokeRect(-s * 0.22, -s * 0.2, s * 0.44, s * 0.17);
+  } else if (kind === 'bomb') {
+    var r = s * 0.2;
+    var gb = c.createRadialGradient(-r * 0.4, -r * 0.2, r * 0.1, 0, s * 0.04, r); gb.addColorStop(0, '#9A9AA6'); gb.addColorStop(1, '#16161C');
+    circle(c, 0, s * 0.05, r); c.fillStyle = gb; c.fill();
+    c.strokeStyle = '#D9B26A'; c.lineWidth = s * 0.035; c.beginPath(); c.moveTo(r * 0.5, -r * 0.55); c.quadraticCurveTo(r * 0.95, -r * 1.25, r * 1.2, -r * 1.1); c.stroke();
+    c.fillStyle = '#FFC24D'; circle(c, r * 1.25, -r * 1.15, s * 0.05 * (0.8 + 0.2 * Math.sin((t || 0) * 12))); c.fill();
+  } else if (kind === 'swap') {
+    c.strokeStyle = '#FFF6DC'; c.fillStyle = '#FFF6DC'; c.lineWidth = s * 0.06;
+    c.beginPath(); c.moveTo(-s * 0.2, -s * 0.08); c.lineTo(s * 0.16, -s * 0.08); c.stroke();
+    c.beginPath(); c.moveTo(s * 0.24, -s * 0.08); c.lineTo(s * 0.12, -s * 0.17); c.lineTo(s * 0.12, s * 0.01); c.closePath(); c.fill();
+    c.beginPath(); c.moveTo(s * 0.2, s * 0.1); c.lineTo(-s * 0.16, s * 0.1); c.stroke();
+    c.beginPath(); c.moveTo(-s * 0.24, s * 0.1); c.lineTo(-s * 0.12, s * 0.01); c.lineTo(-s * 0.12, s * 0.19); c.closePath(); c.fill();
+  } else if (kind === 'reset') {
+    c.strokeStyle = '#FFF6DC'; c.fillStyle = '#FFF6DC'; c.lineWidth = s * 0.06;
+    c.beginPath(); c.arc(0, 0, s * 0.17, -Math.PI * 0.35, Math.PI * 1.35); c.stroke();
+    var ax = Math.cos(-Math.PI * 0.35) * s * 0.17, ay = Math.sin(-Math.PI * 0.35) * s * 0.17;
+    c.beginPath(); c.moveTo(ax + s * 0.09, ay + s * 0.02); c.lineTo(ax - s * 0.06, ay - s * 0.08); c.lineTo(ax - s * 0.03, ay + s * 0.1); c.closePath(); c.fill();
+  } else if (kind === 'tasks') {
+    c.fillStyle = '#FFF6DC'; c.fillRect(-s * 0.16, -s * 0.2, s * 0.32, s * 0.4);
+    c.strokeStyle = '#7A2A1C'; c.lineWidth = s * 0.035;
+    for (var i = 0; i < 3; i++) { var yy = -s * 0.1 + i * s * 0.1; c.beginPath(); c.moveTo(-s * 0.1, yy); c.lineTo(-s * 0.06, yy + s * 0.04); c.lineTo(0, yy - s * 0.03); c.stroke(); c.beginPath(); c.moveTo(s * 0.03, yy); c.lineTo(s * 0.11, yy); c.stroke(); }
+  }
+  c.restore();
+};
+
+module.exports = Y;
 
 };
 M["main"]=function(module,exports,require){
@@ -1034,6 +1558,8 @@ var G = require('./levelgen');
 var BEASTS = require('./beasts');
 var D = require('./draw');
 var T = require('./timer');
+var A = require('./analytics');
+var Y = require('./glyphs');
 
 var LW = 750, LH = 1334;
 var scr, ctx, S = 1, VW = LW, VH = LH, X0 = 0, SAFE_T = 0, SAFE_B = 0;
@@ -1059,14 +1585,48 @@ function beastUnlocked(i) { return save.maxCleared >= (i + 1) * 10; }
 
 // ---------------- 存档 ----------------
 function defaultSave() {
-  return { v: 1, maxCleared: 0, stars: {}, assists: { hint: CFG.FREE_ASSISTS.hint, undo: CFG.FREE_ASSISTS.undo, remove: CFG.FREE_ASSISTS.remove },
-    sfx: true, music: true, vib: true, checkin: { last: '', count: 0 }, daily: {}, winsSinceAd: 0, seenBeast: {} };
+  var fa = CFG.FREE_ASSISTS;
+  return { v: 2, maxCleared: 0, stars: {}, best: {}, coins: CFG.START_COINS || 0, assists: { hint: fa.hint, hammer: fa.hammer, bomb: fa.bomb, swap: fa.swap },
+    sfx: true, music: true, vib: true, checkin: { last: '', count: 0 }, daily: {}, winsSinceAd: 0, seenBeast: {}, seenMech: {}, loginDay: '', tasks: null };
 }
 function loadSave() {
   var s = P.load(), d = defaultSave();
-  if (!s || s.v !== 1) return d;
+  if (!s || (s.v !== 1 && s.v !== 2)) return d;
+  if (s.v === 1) {
+    // v1 → v2：撤销/去除 映射到 交换/锤子，补金币与新道具
+    var a = s.assists || {};
+    s.assists = { hint: a.hint || 0, hammer: a.remove || 0, bomb: d.assists.bomb, swap: a.undo || 0 };
+    s.coins = d.coins; s.v = 2;
+  }
   for (var k in d) if (s[k] === undefined) s[k] = d[k];
+  for (var k2 in d.assists) if (s.assists[k2] === undefined) s.assists[k2] = 0;
   return s;
+}
+// ---------------- 每日任务 / 金币 ----------------
+var TASKS = [
+  { id: 'levels', name: '完成 3 关', need: 3, coins: 50 },
+  { id: 'hint', name: '使用提示 1 次', need: 1, coins: 30 },
+  { id: 'perfect', name: '零失误通关 1 关', need: 1, coins: 50 },
+  { id: 'daily', name: '完成每日挑战', need: 1, coins: 100 }
+];
+function tasksToday() {
+  var d = P.today();
+  if (!save.tasks || save.tasks.day !== d) save.tasks = { day: d, levels: 0, hint: 0, perfect: 0, daily: 0, claimed: {} };
+  return save.tasks;
+}
+function taskProgress(id, n) { var t = tasksToday(); t[id] = (t[id] || 0) + (n || 1); persist(); }
+function tasksClaimable() { var t = tasksToday(); for (var i = 0; i < TASKS.length; i++) if (!t.claimed[TASKS[i].id] && t[TASKS[i].id] >= TASKS[i].need) return true; return false; }
+function addCoins(n, why) { save.coins = (save.coins || 0) + n; persist(); }
+function checkLoginBonus() {
+  var d = P.today();
+  if (save.loginDay === d) return;
+  save.loginDay = d; addCoins(CFG.COINS.login, 'login');
+  setTimeout(function () { toast('每日登录 +' + CFG.COINS.login + ' 金币'); }, 600);
+}
+// 激励视频统一入口（埋点 ad_offer / ad_reward_success）
+function rewardedAd(placement) {
+  A.track('ad_offer', { place: placement, level: st ? st.n : 0 });
+  return P.showRewarded().then(function (r) { if (r.ok) A.track('ad_reward_success', { place: placement, level: st ? st.n : 0 }); return r; });
 }
 function persist() { P.save(save); }
 
@@ -1084,8 +1644,9 @@ function start() {
   P.adsInit(); P.setupShare();
   P.onPointers(onPtr);
   P.onWheel(onWheel);
-  P.onHide(function () { appHidden = true; persist(); });
-  P.onShow(function () { appHidden = false; last = 0; });
+  P.onHide(function () { appHidden = true; persist(); A.endSession(); });
+  P.onShow(function () { appHidden = false; last = 0; A.startSession(); });
+  A.startSession();
   P.raf(frame);
   var total = IMAGES.length + BEASTS.length * 2 + 1, done = 0;
   function tick() { done++; loadProgress = done / total; }
@@ -1093,6 +1654,7 @@ function start() {
   jobs.push(P.loadFont('ShanHaiTitle', 'fonts/title').then(function (f) { if (f) D.setTitleFont(f); tick(); }));
   Promise.all(jobs).then(function () {
     scene = 'menu';
+    checkLoginBonus();
     return P.loadSubpackage('beasts');
   }).then(function () {
     return Promise.all(BEASTS.map(function (b) {
@@ -1109,7 +1671,12 @@ function start() {
     if (m) { var wait = setInterval(function () { if (scene === 'menu') { clearInterval(wait); if (/unlock/.test(q)) save.maxCleared = Math.max(save.maxCleared, +m[1] - 1); startLevel(+m[1]); } }, 50); }
     var sc = /scene=(\w+)/.exec(q);
     if (sc) { var w2 = setInterval(function () { if (scene === 'menu') { clearInterval(w2); if (/unlock/.test(q)) save.maxCleared = Math.max(save.maxCleared, 60); if (sc[1] === 'codex') openCodex(); else if (sc[1] === 'levels') openLevels(); } }, 50); }
-    if (typeof window !== 'undefined') window.__game = { startLevel: startLevel, state: function () { return st; }, save: function () { return save; }, autoSolve: autoSolveStep, tap: function (i) { tapSeg(i); }, blocked: function () { for (var i = 0; i < st.board.segs.length; i++) if (st.alive[i] && !st.anims[i] && !G.isFree(st.board, st.occ, i)) return i; return -1; }, cellPx: function (x, y) { var p = cellPx(x, y); return [p[0] * S, p[1] * S]; }, openBeast: function (i) { openBeast(BEASTS[i]); }, openSettings: openSettings, openDaily: openDaily, hint: function () { doHint(); }, scene: function () { return scene; }, modal: function () { return modal; }, openCodex: openCodex, openCheckin: openCheckin, view: function () { return { z: VZ.z, px: VZ.px, py: VZ.py, vp: VP }; }, zoomAt: function (z, x, y) { zoomAt(z, x / S, y / S); }, panTo: function (cx, cy) { panToCell(cx, cy); }, timer: function () { return st && st.timer; }, timerPaused: function () { return timerPaused(); }, setHidden: function (h) { appHidden = !!h; }, setAdShowing: function (on) { P._setAdShowing(on); }, setTimeLeft: function (sec) { if (st && st.timer) { st.timer.left = sec; st.timer.started = true; st.timer.lastSec = Math.ceil(sec); } }, openQuit: function () { modal = { type: 'quit', t: 0 }; }, closeModal: function () { modal = null; }, limitFor: function (n) { return T.limitFor(G.getLevel(n), n); }, limitDaily: function (d) { return T.limitFor(G.getDaily(d), 0, d); } };
+    if (typeof window !== 'undefined') window.__game = { startLevel: startLevel, state: function () { return st; }, save: function () { return save; }, autoSolve: autoSolveStep, tap: function (i) { tapSeg(i); }, blocked: function () { for (var i = 0; i < st.board.segs.length; i++) if (st.alive[i] && !st.anims[i] && !G.isFree(st.board, st.occ, i)) return i; return -1; }, cellPx: function (x, y) { var p = cellPx(x, y); return [p[0] * S, p[1] * S]; }, openBeast: function (i) { openBeast(BEASTS[i]); }, openSettings: openSettings, openDaily: openDaily, hint: function () { doHint(); }, scene: function () { return scene; }, modal: function () { return modal; }, openCodex: openCodex, openCheckin: openCheckin, view: function () { return { z: VZ.z, px: VZ.px, py: VZ.py, vp: VP }; }, zoomAt: function (z, x, y) { zoomAt(z, x / S, y / S); }, panTo: function (cx, cy) { panToCell(cx, cy); }, timer: function () { return st && st.timer; }, cacheBuilds: function () { return lineCache ? lineCache.builds : 0; }, benchRebuild: function (n) { var t0 = Date.now(); for (var k = 0; k < n; k++) { st.ver++; ensureLineCache(excludedSet()); } var t1 = Date.now(); for (var j = 0; j < n; j++) render(); return { rebuildMs: (t1 - t0) / n, frameMs: (Date.now() - t1) / n }; }, timerPaused: function () { return timerPaused(); }, setHidden: function (h) { appHidden = !!h; }, setAdShowing: function (on) { P._setAdShowing(on); }, setTimeLeft: function (sec) { if (st && st.timer) { st.timer.left = sec; st.timer.started = true; st.timer.lastSec = Math.ceil(sec); } }, openQuit: function () { modal = { type: 'quit', t: 0 }; }, closeModal: function () { modal = null; }, limitFor: function (n) { return T.limitFor(G.getLevel(n), n); }, limitDaily: function (d) { return T.limitFor(G.getDaily(d), 0, d); },
+      G: G, ms: function () { return st && st.ms; }, rotate: function (i) { rotateSeg(i); }, tapOpt: function (i, o) { tapSeg(i, o); },
+      boardTapLogical: function (x, y) { boardTap(x, y); }, cellPxLogical: function (x, y) { return cellPx(x, y); }, mode: function () { return st && st.mode; },
+      enterMode: enterMode, doHint: doHint, events: function (n) { return A.recent(n); }, eventCounts: function () { return A.counts(); },
+      openTasks: function () { modal = { type: 'tasks', t: 0 }; }, tasks: function () { return tasksToday(); }, reset: doReset, hintCands: function () { return hintCandidates(); },
+      layout: function () { return { BL: BL, VP: VP, S: S, VW: VW, VH: VH, X0: X0, SAFE_T: SAFE_T, SAFE_B: SAFE_B }; }, forceWin: function () { st.board.segs.forEach(function (sg, i) { if (st.alive[i]) removeSeg(i, true); }); } };
   }
 }
 
@@ -1138,7 +1705,7 @@ function update(dt) {
     if (p.t >= p.life) { parts.splice(i, 1); continue; }
     p.x += p.vx * dt; p.y += p.vy * dt; p.vy += (p.g || 0) * dt; p.vx *= (1 - (p.drag || 0) * dt); p.vy *= (1 - (p.drag || 0) * dt);
   }
-  for (var j = toasts.length - 1; j >= 0; j--) { toasts[j].t += dt; if (toasts[j].t > 2.2) toasts.splice(j, 1); }
+  for (var j = toasts.length - 1; j >= 0; j--) { toasts[j].t += dt; if (toasts[j].t > (toasts[j].d || 2.2)) toasts.splice(j, 1); }
 }
 
 function render() {
@@ -1169,7 +1736,7 @@ function hitRegion(x, y) {
 }
 function isPressed(key) { return pressedKey === key; }
 
-function toast(s) { toasts = [{ s: s, t: 0 }]; }
+function toast(s, dur) { toasts = [{ s: s, t: 0, d: dur || 2.2 }]; }
 
 function cover(c, img) {
   if (!img) { c.fillStyle = '#EFE2C4'; c.fillRect(0, 0, VW, VH); return; }
@@ -1325,7 +1892,17 @@ function drawMenu(c) {
     { k: 'checkin', img: IMG.giftbag, label: '签到', cb: openCheckin, x: cx, dot: checkinAvailable() },
     { k: 'settings', img: IMG.ic_settings, label: '设置', cb: openSettings, x: cx + 210 }
   ];
-  items.forEach(function (it) { roundIcon(c, it.k, it.x, y2, 104, it.img, it.label, it.cb, { dot: it.dot, framed: it.k !== 'settings' }); });
+  items[0].x = cx - 255; items[1].x = cx - 85; items[2].x = cx + 255;
+  items.splice(2, 0, { k: 'tasks', img: null, label: '任务', cb: function () { modal = { type: 'tasks', t: 0 }; }, x: cx + 85, dot: tasksClaimable(), task: true });
+  items.forEach(function (it) {
+    if (it.task) { var pr = isPressed('tasks') ? 0.92 : 1; Y.jade(c, it.x, y2, 104 * pr); Y.itemGlyph(c, 'tasks', it.x, y2, 104 * pr, now); }
+    roundIcon(c, it.k, it.x, y2, 104, it.img, it.label, it.cb, { dot: it.dot, framed: it.k !== 'settings' && !it.task });
+  });
+  // 金币
+  var gx = X0 + 30, gy = SAFE_T + 24;
+  D.rr(c, gx, gy, 190, 56, 28); c.fillStyle = 'rgba(60,32,10,0.82)'; c.fill(); c.lineWidth = 2.5; c.strokeStyle = '#D4A443'; c.stroke();
+  if (IMG.coin) c.drawImage(IMG.coin, gx + 6, gy + 6, 44, 44);
+  D.text(c, String(save.coins || 0), gx + 120, gy + 29, 30, '#FBE6B0', { title: true });
 }
 
 // 圆形图标按钮（带标签）
@@ -1350,7 +1927,14 @@ function roundIcon(c, key, cx, cy, size, img, label, cb, opt) {
   if (opt.dot) { c.fillStyle = '#E8392B'; c.beginPath(); c.arc(cx + s * 0.36, cy - s * 0.36, 12, 0, Math.PI * 2); c.fill(); c.lineWidth = 3; c.strokeStyle = '#fff'; c.stroke(); }
   if (opt.badge != null) {
     var bx = cx + s * 0.36, byy = cy - s * 0.38;
-    if (opt.badge === 'ad') {
+    if (opt.badge === 'coin') {
+      D.rr(c, bx - 30, byy - 16, 60, 32, 16); c.fillStyle = '#5A3A10'; c.fill(); c.lineWidth = 2.5; c.strokeStyle = '#F3D27E'; c.stroke();
+      if (IMG.coin) c.drawImage(IMG.coin, bx - 27, byy - 12, 24, 24);
+      D.text(c, '+', bx + 12, byy, 24, '#FFF2C8', { weight: '800' });
+    } else if (opt.badge === '免费') {
+      D.rr(c, bx - 30, byy - 16, 60, 32, 16); c.fillStyle = '#2C6B4E'; c.fill(); c.lineWidth = 2.5; c.strokeStyle = '#F3D27E'; c.stroke();
+      D.text(c, '免费', bx, byy + 1, 18, '#FFF2C8', { weight: '700' });
+    } else if (opt.badge === 'ad') {
       D.rr(c, bx - 30, byy - 16, 60, 32, 16); c.fillStyle = '#2E3A6B'; c.fill(); c.lineWidth = 2.5; c.strokeStyle = '#F3D27E'; c.stroke();
       c.fillStyle = '#FFF2C8'; c.beginPath(); c.moveTo(bx - 14, byy - 8); c.lineTo(bx - 14, byy + 8); c.lineTo(bx - 3, byy); c.closePath(); c.fill();
       D.text(c, '广告', bx + 13, byy + 1, 17, '#FFF2C8', { weight: '700' });
@@ -1483,20 +2067,70 @@ function openBeast(b) { modal = { type: 'beast', b: b, t: 0 }; }
 
 // ---------------- 关卡玩法 ----------------
 var st = null, boardCache = null;
-function startLevel(n, daily) {
-  var board = daily ? G.getDaily(daily) : G.getLevel(n);
+// 机关首次出现时的教学：toast 全文 + 副标题短句 + 手指指向
+var MECH_TIPS = {
+  ice: '冰封线：相邻的线每飞走一条，冰层少一层；破冰后才能点',
+  lock: '铜锁线：先让同色圈的玉钥匙线飞走，锁才会打开',
+  bi: '双向线：两端都有箭头，点哪一端就朝哪一端飞',
+  rot: '旋转机关：点箭头处的转盘顺时针转 90°，点线身发射',
+  portal: '传送门：箭路进入一扇门，会从同色的另一扇门继续',
+  bomb: '炸弹线：飞出时炸开周围 3×3 内的普通线',
+  chain: '连锁线：锁链相连的两条线，飞走一条会连带拉出另一条'
+};
+var MECH_SHORT = {
+  ice: '冰封：邻线飞走一条，冰层少一层', lock: '铜锁：先放走同色圈的玉钥匙线', bi: '双向：点哪端就朝哪端飞',
+  rot: '转盘：点箭头转向，点线身发射', portal: '传送门：箭路从同色门穿出', bomb: '炸弹：飞出时炸开周围普通线', chain: '连锁：飞走一条，拉出另一条'
+};
+function mechTarget(board, m) {
+  if (m === 'portal') return board.portals && board.portals.length ? { cell: board.portals[0][0] } : null;
+  // 选离棋盘中心最近的那条，方便看到
+  var best = -1, bd = 1e9, cx = board.w / 2, cy = board.h / 2;
+  for (var i = 0; i < board.segs.length; i++) {
+    var sg = board.segs[i], k = G.mechOf(sg);
+    if (m === 'lock' ? k !== 'key' : k !== m) continue;
+    var mid = sg.cells[Math.floor(sg.cells.length / 2)], d = Math.abs(mid[0] - cx) + Math.abs(mid[1] - cy);
+    if (d < bd) { bd = d; best = i; }
+  }
+  return best >= 0 ? { seg: best } : null;
+}
+function startLevel(n, daily, retry) {
+  var base = daily ? G.getDaily(daily) : G.getLevel(n);
+  var board = G.cloneBoard(base), ms = G.initState(board);
   st = {
-    n: n, daily: daily || null, board: board, alive: board.segs.map(function () { return true; }),
-    occ: null, hearts: CFG.HEARTS, anims: {}, combo: 0, lastRemove: -9, qishi: 0, hint: -1, hintT: 0,
-    misses: 0, undoUsed: false, revived: false, removeMode: false, won: false, winT: 0, failed: false, removedCount: 0,
-    tut: n === 1 && !daily ? 0 : -1, flash: {}, shakeT: 0, heartAnim: [], startT: now, ver: 0, tapHL: null
+    n: n, daily: daily || null, board: board, ms: ms, alive: ms.alive, occ: ms.occ,
+    hearts: CFG.HEARTS, anims: {}, combo: 0, lastRemove: -9, qishi: 0, hint: -1, hintT: 0, hintOpt: null,
+    misses: 0, heartRevived: false, timeRevived: false, mode: null, won: false, winT: 0, failed: false, removedCount: 0,
+    tut: n === 1 && !daily ? 0 : -1, flash: {}, shakeT: 0, heartAnim: [], startT: now, ver: 0, tapHL: null, spin: {}, comboShow: null, doubled: false
   };
-  st.occ = G.buildOcc(board, st.alive);
-  st.timer = T.create(T.limitFor(board, n, daily));
+  st.timer = T.create(T.limitFor(base, n, daily));
+  st.starTime = T.starTimeFor(st.timer.limit, n, daily);
+  // 锁链：找到配对两条线相邻的一条边，画在交界处
+  st.links = [];
+  board.segs.forEach(function (sg, i) {
+    if (sg.chain == null || sg.chain < i) return;
+    var other = board.segs[sg.chain], found = null;
+    for (var a = 0; a < sg.cells.length && !found; a++) for (var b = 0; b < other.cells.length; b++) {
+      var p = sg.cells[a], q = other.cells[b];
+      if (Math.abs(p[0] - q[0]) + Math.abs(p[1] - q[1]) === 1) { found = { a: i, b: sg.chain, x: (p[0] + q[0]) / 2, y: (p[1] + q[1]) / 2, horiz: p[1] === q[1] }; break; }
+    }
+    if (found) st.links.push(found);
+  });
+  st.mtut = null;
+  var fresh = (board.mechs || []).filter(function (m) { return !save.seenMech[m]; });
+  if (fresh.length) {
+    var m = fresh[0];
+    st.mtut = { m: m, target: mechTarget(board, m), t: 0, done: false };
+    save.seenMech[m] = 1; persist();
+    A.track('tutorial_step', { step: 'mech_' + m, level: n });
+  }
   modal = null; scene = 'play'; boardCache = null; parts = [];
   computeBoardLayout(); setView(1, 0, 0); lineCache = null;
-  if (!daily && n === 2) toast('撞到其他线会失去 1 颗心');
+  if (st.mtut) toast(MECH_TIPS[st.mtut.m], 4.5);
+  else if (!daily && n === 2) toast('撞到其他线会失去 1 颗心');
   else if (!daily && n === 3) toast('双指捏合可放大棋盘，双击空白处复原');
+  if (retry) A.track('level_retry', { level: daily ? 'daily' : n });
+  A.track('level_start', { level: daily ? 'daily' : n, lines: board.segs.length, mechs: (board.mechs || []).join('+'), limit: st.timer.limit });
+  if (!daily && n === 1) A.track('tutorial_step', { step: 'l1_start', level: 1 });
 }
 var BL = null; // 棋盘布局
 var VP = null; // 棋盘格子区（逻辑坐标）
@@ -1576,43 +2210,63 @@ function buildBoardCache() {
   boardCache = { cv: cv, k: k, m: M };
 }
 
-// 蛇形路径：参数 t 处的位置（格坐标）
-function segPoint(seg, t) {
-  var cells = seg.cells, L = cells.length, d = G.headDir(cells);
-  function P_(i) {
-    if (i < L) return cells[i];
-    var hd = cells[L - 1], k = i - L + 1; return [hd[0] + d[0] * k, hd[1] + d[1] * k];
-  }
-  var i = Math.floor(t), f = t - i;
-  var a = P_(Math.max(0, i)), b = P_(Math.max(0, i + 1));
-  return [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f];
-}
-function segPoly(seg, s) {
-  var L = seg.cells.length, pts = [segPoint(seg, s)];
-  for (var i = Math.floor(s) + 1; i < s + L - 1; i++) pts.push(segPoint(seg, i));
-  pts.push(segPoint(seg, s + L - 1));
+
+// 运动路径：track（尾→头）+ 出射线（含传送门跳跃）+ 板外延伸；返回格坐标点列
+function buildPath(ex, L) {
+  var b = st.board, pts = ex.track.slice();
+  for (var r = 0; r < ex.ray.length; r++) pts.push([ex.ray[r] % b.w, (ex.ray[r] / b.w) | 0]);
+  var last = pts[pts.length - 1];
+  for (var k = 1; k <= L + 3; k++) pts.push([last[0] + ex.dir[0] * k, last[1] + ex.dir[1] * k]);
   return pts;
 }
+function pathPoint(path, t) {
+  var n = path.length, i = Math.floor(t), f = t - i;
+  var a = path[Math.max(0, Math.min(n - 1, i))], b = path[Math.max(0, Math.min(n - 1, i + 1))];
+  if (Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) > 1.5) return f < 0.5 ? a : b; // 传送门：瞬移
+  return [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f];
+}
+// 线在偏移 s 时的折线（按传送门断开成若干段）
+function polyRuns(path, s, L) {
+  var pts = [pathPoint(path, s)];
+  for (var i = Math.floor(s) + 1; i < s + L - 1; i++) pts.push(pathPoint(path, i));
+  pts.push(pathPoint(path, s + L - 1));
+  var runs = [[pts[0]]];
+  for (var k = 1; k < pts.length; k++) {
+    var p = pts[k], q = pts[k - 1];
+    if (Math.abs(p[0] - q[0]) + Math.abs(p[1] - q[1]) > 1.5) runs.push([p]); else runs[runs.length - 1].push(p);
+  }
+  return runs;
+}
+function staticDir(i) {
+  var sg = st.board.segs[i];
+  if (sg.rot && st.ms.rdir[i] >= 0) return G.DIRS[st.ms.rdir[i]];
+  return G.headDir(sg.cells);
+}
 
+// 点击命中：点击点 0.5 格以内最近的线；返回 { i, u（沿线位置，0=尾 L-1=头）, dHead（到箭头格的距离） }
+function hitLine(cx, cy) {
+  var best = -1, bd = 0.5, bu = 0;
+  for (var i = 0; i < st.board.segs.length; i++) {
+    if (!st.alive[i] || st.anims[i]) continue;
+    var cl = st.board.segs[i].cells, d0 = staticDir(i), L = cl.length;
+    for (var j = 0; j < L; j++) {
+      var a = cl[j], b = j + 1 < L ? cl[j + 1] : [a[0] + d0[0] * 0.4, a[1] + d0[1] * 0.4];
+      var r = distSegT(cx, cy, a[0], a[1], b[0], b[1]);
+      if (r[0] < bd) { bd = r[0]; best = i; bu = j + r[1] * (j + 1 < L ? 1 : 0.4); }
+    }
+  }
+  if (best < 0) return null;
+  var hd = st.board.segs[best].cells[st.board.segs[best].cells.length - 1];
+  return { i: best, u: bu, dHead: Math.hypot(cx - hd[0], cy - hd[1]) };
+}
 function boardTap(x, y) {
   if (!st || st.won || st.failed || !BL) return;
   var k = BL.cell * VZ.z;
   var cx = (x - VP.x - VZ.px) / k - 0.5, cy = (y - VP.y - VZ.py) / k - 0.5;
-  var best = -1, bd = 0.5; // 点击点 0.5 格以内最近的线
-  if (inVP(x, y)) {
-    for (var i = 0; i < st.board.segs.length; i++) {
-      if (!st.alive[i] || st.anims[i]) continue;
-      var cl = st.board.segs[i].cells, d0 = G.headDir(cl), L = cl.length;
-      for (var j = 0; j < L; j++) {
-        var a = cl[j], b = j + 1 < L ? cl[j + 1] : [a[0] + d0[0] * 0.4, a[1] + d0[1] * 0.4];
-        var dd = distSeg(cx, cy, a[0], a[1], b[0], b[1]);
-        if (dd < bd) { bd = dd; best = i; }
-      }
-    }
-  }
-  if (best < 0) {
-    if (st.removeMode) { st.removeMode = false; toast('已取消去除'); return; }
-    // 双击空白处：放大 ↔ 复原
+  var hit = inVP(x, y) ? hitLine(cx, cy) : null;
+  if (st.mode === 'bomb' && inVP(x, y)) { bombAt(Math.round(cx), Math.round(cy)); return; }
+  if (!hit) {
+    if (st.mode) { cancelMode(); return; }
     if (lastEmptyTap && now - lastEmptyTap.t < 0.38 && Math.hypot(x - lastEmptyTap.x, y - lastEmptyTap.y) < 50) {
       if (VZ.z > 1.05) setView(1, 0, 0); else zoomAt(2.2, x, y);
       lastEmptyTap = null;
@@ -1620,52 +2274,115 @@ function boardTap(x, y) {
     return;
   }
   lastEmptyTap = null;
-  if (st.removeMode) { st.removeMode = false; useAssist('remove', function () { removeSeg(best, true); }); return; }
-  tapSeg(best);
+  var i = hit.i, seg = st.board.segs[i], L = seg.cells.length;
+  if (st.mode === 'hammer') { var hi = i; st.mode = null; useItem('hammer', function () { hammerFx(hi); removeSeg(hi, true); }); return; }
+  if (st.mode === 'swap') { swapAt(i); return; }
+  // 旋转机关：点箭头格（转盘）= 转向；点线身 = 发射
+  if (seg.rot && hit.dHead < 0.5 && G.tapBlock(st.board, st.ms, i) === null) { rotateSeg(i); return; }
+  var opt = null;
+  if (seg.bi) opt = hit.u < (L - 1) / 2 ? 'tail' : 'head';
+  tapSeg(i, opt);
 }
-function distSeg(px, py, ax, ay, bx, by) {
+function distSegT(px, py, ax, ay, bx, by) {
   var dx = bx - ax, dy = by - ay, l = dx * dx + dy * dy, t = l ? ((px - ax) * dx + (py - ay) * dy) / l : 0;
   t = Math.max(0, Math.min(1, t));
-  var qx = ax + dx * t - px, qy = ay + dy * t - py; return Math.sqrt(qx * qx + qy * qy);
+  var qx = ax + dx * t - px, qy = ay + dy * t - py; return [Math.sqrt(qx * qx + qy * qy), t];
+}
+function distSeg(px, py, ax, ay, bx, by) { return distSegT(px, py, ax, ay, bx, by)[0]; }
+
+function mtutDone(m) { if (st.mtut && !st.mtut.done && st.mtut.m === m) { st.mtut.done = true; A.track('tutorial_step', { step: 'mech_' + m + '_done', level: st.n }); } }
+
+function rotateSeg(i) {
+  T.start(st.timer);
+  var ds = G.rotDirs(st.board.segs[i]), cur = st.ms.rdir[i], idx = ds.indexOf(cur), nx = ds[(idx + 1) % ds.length];
+  st.spin[i] = { from: cur, to: nx, t: 0 };
+  st.ms.rdir[i] = nx; st.ver++;
+  if (st.hint === i && st.hintOpt === 'rot') { var op = G.removableOpt(st.board, st.ms, i, false); if (op) st.hintOpt = null; }
+  P.play('tap', 0.8);
+  A.track('arrow_tap', { level: st.daily ? 'daily' : st.n, act: 'rotate' });
+  mtutDone('rot');
 }
 
-function tapSeg(i) {
+function tapSeg(i, opt) {
+  if (!st.alive[i] || st.anims[i]) return;
   T.start(st.timer);
-  var b = st.board, seg = b.segs[i], ray = G.rayCells(b.w, b.h, seg.cells);
-  var blockAt = -1;
-  for (var r = 0; r < ray.length; r++) if (st.occ[ray[r]] >= 0) { blockAt = r; break; }
+  var b = st.board, seg = b.segs[i], ms = st.ms, lv = st.daily ? 'daily' : st.n;
+  A.track('arrow_tap', { level: lv });
+  var tb = G.tapBlock(b, ms, i);
+  if (tb) {
+    // 冰封/上锁：不能点，不扣心
+    st.flash[i] = 0.4; st.tapHL = { i: i, t: 0.35 };
+    P.play('hit', 0.35);
+    if (tb === 'ice') toast('冰封未破：还要 ' + ms.ice[i] + ' 条相邻的线飞走');
+    else { toast('铜锁未开：先让同色圈的玉钥匙线飞走'); st.flash[seg.lock] = 1.0; }
+    A.track('arrow_blocked', { level: lv, reason: tb });
+    return;
+  }
+  var ex = G.exitOf(b, i, opt || (seg.bi ? 'head' : null), ms);
+  var blockAt = G.blockIndex(ex, ms.occ, i);
   if (st.hint === i) st.hint = -1;
   st.tapHL = { i: i, t: 0.35 };
-  if (blockAt < 0) { removeSeg(i, false); return; }
-  // 撞击
-  var blocker = st.occ[ray[blockAt]], bk = blockAt + 0.28;
-  st.anims[i] = { type: 'bump', t: 0, k: bk, v: Math.max(CFG.SLIDE_SPEED, bk / 0.4), blocker: blocker, hit: false };
+  if (seg.bi) mtutDone('bi');
+  if (blockAt < 0) { removeSeg(i, false, ex); return; }
+  var blocker = ms.occ[ex.ray[blockAt]], bk = blockAt + 0.28;
+  st.anims[i] = { type: 'bump', t: 0, k: bk, v: Math.max(CFG.SLIDE_SPEED, bk / 0.4), blocker: blocker, hit: false, path: buildPath(ex, seg.cells.length), dir: ex.dir };
+  A.track('arrow_blocked', { level: lv, reason: 'line' });
 }
 
-function removeSeg(i, byAssist) {
-  var seg = st.board.segs[i], L = seg.cells.length;
-  var ray = G.rayCells(st.board.w, st.board.h, seg.cells);
-  st.alive[i] = false; st.occ = G.buildOcc(st.board, st.alive); st.ver++;
-  st.removedCount++;
-  if (byAssist) {
-    st.anims[i] = { type: 'dissolve', t: 0 };
-    P.play('remove');
-    seg.cells.forEach(function (cc) { var p = cellPx(cc[0], cc[1]); burst(p[0], p[1], 10, 'ink'); burst(p[0], p[1], 6, 'gold'); });
-  } else {
-    var dist = ray.length + L + 2;
-    st.anims[i] = { type: 'exit', t: 0, dist: dist, v: Math.max(CFG.SLIDE_SPEED, dist / 0.75) };
+function midPx(i) { var sg = st.board.segs[i], m = sg.cells[Math.floor(sg.cells.length / 2)]; return cellPx(m[0], m[1]); }
+function removeSeg(i, byAssist, ex) {
+  var b = st.board, ms = st.ms, seg = b.segs[i], L = seg.cells.length, lv = st.daily ? 'daily' : st.n;
+  if (!ms.alive[i]) return;
+  var iceBefore = ms.ice.slice();
+  if (!byAssist && !ex) ex = G.exitOf(b, i, null, ms);
+  var res = G.removeLine(b, ms, i, byAssist ? 'tool' : 'exit');
+  st.ver++;
+  st.removedCount += res.length;
+  res.forEach(function (r) {
+    var sg = b.segs[r.i];
+    if (r.i === i && !byAssist) {
+      var path = buildPath(ex, L), dist = ex.ray.length + L + 2;
+      st.anims[i] = { type: 'exit', t: 0, dist: dist, v: Math.max(CFG.SLIDE_SPEED, dist / 0.75), path: path, dir: ex.dir };
+    } else {
+      st.anims[r.i] = { type: 'dissolve', t: 0, why: r.why };
+      var mp = midPx(r.i);
+      if (r.why === 'chain') { burst(mp[0], mp[1], 16, 'gold', 260); mtutDone('chain'); }
+      else if (r.why === 'bomb') { burst(mp[0], mp[1], 10, 'red', 220); }
+      else { sg.cells.forEach(function (cc) { var p = cellPx(cc[0], cc[1]); burst(p[0], p[1], 6, 'ink'); burst(p[0], p[1], 4, 'gold'); }); }
+    }
+    if (sg.key != null && st.alive[sg.key] === true) {
+      var lp = midPx(sg.key); burst(lp[0], lp[1], 22, 'jade', 240); floatText([lp[0], lp[1] - 10], '开锁', '#B8F0C8', 30);
+      mtutDone('lock');
+    }
+    A.track('arrow_removed', { level: lv, why: r.why, tool: byAssist ? 1 : 0 });
+  });
+  // 冰层碎裂
+  for (var j = 0; j < ms.ice.length; j++) if (ms.alive[j] && iceBefore[j] > ms.ice[j]) {
+    var ip = midPx(j); burst(ip[0], ip[1], ms.ice[j] === 0 ? 22 : 9, 'ice', ms.ice[j] === 0 ? 260 : 140);
+    if (ms.ice[j] === 0) { P.play('unlock', 0.35); mtutDone('ice'); }
+  }
+  if (seg.bomb && !byAssist) {
+    var bc = G.bombCenter(seg), bp = cellPx(bc[0], bc[1]);
+    burst(bp[0], bp[1], 40, 'red', 420); burst(bp[0], bp[1], 30, 'gold', 360); burst(bp[0], bp[1], 2, 'blot');
+    st.shakeT = 0.35; P.play('remove'); if (save.vib) P.vibrate();
+    mtutDone('bomb');
+  }
+  if (!byAssist && ex && ex.ray.some(function (c) { return G.pmapOf(b)[c] >= 0; })) mtutDone('portal');
+  if (byAssist) { P.play('remove'); }
+  else {
     if (now - st.lastRemove < 1.6) st.combo++; else st.combo = 1;
     st.lastRemove = now;
     P.play('pluck' + Math.min(7, st.combo - 1));
-    st.qishi = Math.min(1.2, st.qishi + 0.1 + 0.05 * Math.min(st.combo, 6));
-    if (st.combo >= 3) floatText(cellPx(seg.cells[L - 1][0], seg.cells[L - 1][1]), '连击 ×' + st.combo, '#FBE09A');
+    st.qishi = Math.min(1.2, st.qishi + 0.06 + 0.03 * Math.min(st.combo, 6));
+    if (st.combo >= 3) st.comboShow = { n: st.combo, t: 0 };
     if (st.qishi >= 1) {
       st.qishi = 0.35;
-      floatText([VW / 2, BL.y + BL.h / 2], '气势如虹', '#FFE7A0', 64);
-      burst(VW / 2, BL.y + BL.h / 2, 60, 'gold', 520);
+      var qy = Math.min(BL.y - 44, SAFE_T + 215);
+      floatText([VW / 2, qy], '气势如虹', '#FFE7A0', 52);
+      burst(VW / 2, qy, 40, 'gold', 420);
     }
   }
-  if (st.tut >= 0) st.tut++;
+  if (st.tut >= 0) { st.tut++; A.track('tutorial_step', { step: 'l1_' + st.tut, level: 1 }); }
   if (st.hint >= 0 && !st.alive[st.hint]) st.hint = -1;
 }
 
@@ -1673,6 +2390,9 @@ function updatePlay(dt) {
   if (st.hintT > 0) { st.hintT -= dt; if (st.hintT <= 0) st.hint = -1; }
   st.qishi = Math.max(0, st.qishi - dt * 0.06);
   if (st.shakeT > 0) st.shakeT -= dt;
+  if (st.mtut) st.mtut.t += dt;
+  if (st.comboShow) { st.comboShow.t += dt; if (st.comboShow.t > 1.4) st.comboShow = null; }
+  for (var sk in st.spin) { st.spin[sk].t += dt; if (st.spin[sk].t > 0.2) { delete st.spin[sk]; st.ver++; } }
   for (var k in st.flash) { st.flash[k] -= dt; if (st.flash[k] <= 0) delete st.flash[k]; }
   for (var h = st.heartAnim.length - 1; h >= 0; h--) { st.heartAnim[h].t += dt; if (st.heartAnim[h].t > 0.8) st.heartAnim.splice(h, 1); }
   if (st.tapHL) { st.tapHL.t -= dt; if (st.tapHL.t <= 0) st.tapHL = null; }
@@ -1683,8 +2403,7 @@ function updatePlay(dt) {
     if (a.type === 'exit') {
       var acc = 0.07;
       a.s = a.t < acc ? V * a.t * a.t / (2 * acc) : V * (a.t - acc / 2);
-      // 金色墨迹拖尾
-      var hp = segPoint(seg, a.s + seg.cells.length - 1), px = cellPx(hp[0], hp[1]);
+      var hp = pathPoint(a.path, a.s + seg.cells.length - 1), px = cellPx(hp[0], hp[1]);
       var n = 1 + Math.min(3, st.combo);
       if (inVP(px[0], px[1])) for (var q = 0; q < n; q++) spawn(px[0] + (Math.random() - 0.5) * BL.cell * 0.3, px[1] + (Math.random() - 0.5) * BL.cell * 0.3, 'gold', 40);
       if (a.s >= a.dist) delete st.anims[key];
@@ -1696,7 +2415,7 @@ function updatePlay(dt) {
         if (!a.hit) {
           a.hit = true; st.flash[i] = 0.5; st.flash[a.blocker] = 0.35; st.shakeT = 0.3;
           P.play('hit'); if (save.vib) P.vibrate();
-          var hp2 = segPoint(seg, a.s + seg.cells.length - 1), p2 = cellPx(hp2[0], hp2[1]);
+          var hp2 = pathPoint(a.path, a.s + seg.cells.length - 1), p2 = cellPx(hp2[0], hp2[1]);
           burst(p2[0], p2[1], 14, 'red');
           loseHeart();
         }
@@ -1706,13 +2425,11 @@ function updatePlay(dt) {
       if (a.t > 0.5) delete st.anims[key];
     }
   }
-  // 倒计时
   if (T.active(st.timer)) {
     var tev = T.tick(st.timer, dt, timerPaused());
     if (tev.tick) P.play('tick', 0.45);
     if (tev.expired) timeUp();
   }
-  // 胜利判定
   if (!st.won && !st.failed && st.removedCount === st.board.segs.length && Object.keys(st.anims).length === 0) win();
   if (st.won) {
     st.winT += dt;
@@ -1726,41 +2443,55 @@ function updatePlay(dt) {
 }
 
 function loseHeart() {
-  if (st.failed || st.won) return; // 已判负（时间到 / 心已用尽）后，飞行中的撞击不再扣心
+  if (st.failed || st.won) return;
   if (st.n === 1 && !st.daily) { toast('被挡住了！先让前面的箭飞走'); return; }
   st.hearts--; st.misses++;
   st.heartAnim.push({ i: st.hearts, t: 0 });
   if (st.hearts <= 0) {
-    st.failed = true;
+    st.failed = true; st.mode = null;
+    A.track('level_fail', { level: st.daily ? 'daily' : st.n, reason: 'hearts', left: st.board.segs.length - st.removedCount, time: Math.round(st.timer.elapsed) });
     setTimeout(function () { P.play('fail'); modal = { type: 'fail', t: 0 }; }, 650);
   }
 }
 
-// 倒计时暂停条件：后台、广告、任何弹窗（暂停/设置/图鉴详情/菜单）、胜负已定、最后几支箭正在飞出
 function timerPaused() {
   return appHidden || P.adShowing() || !!modal || scene !== 'play' || !st || st.won || st.failed || st.removedCount === st.board.segs.length;
 }
 function timeUp() {
-  st.failed = true; st.timeUp = true; st.hint = -1; st.removeMode = false;
+  st.failed = true; st.timeUp = true; st.hint = -1; st.mode = null;
   if (save.vib) P.vibrate();
+  A.track('level_fail', { level: st.daily ? 'daily' : st.n, reason: 'time', left: st.board.segs.length - st.removedCount });
   setTimeout(function () { if (st && st.timeUp && st.failed && scene === 'play') { P.play('fail'); modal = { type: 'timeup', t: 0 }; } }, 450);
 }
 function reviveTime() {
   T.revive(st.timer, CFG.TIMER_REVIVE_SECONDS);
-  st.failed = false; st.timeUp = false; modal = null;
+  st.failed = false; st.timeUp = false; st.timeRevived = true; modal = null;
   floatText([VW / 2, SAFE_T + 160], '+' + CFG.TIMER_REVIVE_SECONDS + '秒', '#9EF0C0', 52);
 }
+// 星级：3★ = 零失误 且 用时达标（前 10 关不看用时）；2★ = 失误不超过心数一半；1★ = 通关。看广告复活心数 → 1★
+function computeStars() {
+  if (st.heartRevived) return 1;
+  var timeOk = !st.starTime || st.timer.elapsed <= st.starTime;
+  if (st.misses === 0 && timeOk && !st.timeRevived) return 3;
+  if (st.misses <= Math.floor(CFG.HEARTS * 0.5)) return 2;
+  return 1;
+}
 function win() {
-  st.won = true; st.winT = 0; st.hint = -1;
+  st.won = true; st.winT = 0; st.hint = -1; st.mode = null;
   P.play('win');
-  var stars = st.revived ? 1 : st.hearts;
+  var stars = computeStars(), coins;
   st.stars = stars;
   if (st.daily) {
     var first = !save.daily[st.daily];
     save.daily[st.daily] = Math.max(save.daily[st.daily] || 0, stars);
-    if (first) { save.assists.hint += 1; st.dailyReward = true; }
+    coins = first ? CFG.COINS.daily : CFG.COINS.win[0];
+    if (first) taskProgress('daily');
   } else {
+    var firstClear = !save.stars[st.n];
+    coins = firstClear ? CFG.COINS.win[stars - 1] : Math.round(CFG.COINS.win[stars - 1] / 3); // 重玩只给 1/3，防刷
     save.stars[st.n] = Math.max(save.stars[st.n] || 0, stars);
+    var bt = save.best[st.n] || {};
+    save.best[st.n] = { t: Math.min(bt.t || 1e9, Math.round(st.timer.elapsed)), m: Math.min(bt.m == null ? 99 : bt.m, st.misses) };
     var wasMax = save.maxCleared;
     save.maxCleared = Math.max(save.maxCleared, st.n);
     if (st.n % 10 === 0 && st.n > wasMax) {
@@ -1768,7 +2499,11 @@ function win() {
       if (bi < BEASTS.length) st.unlock = BEASTS[bi];
     }
     save.winsSinceAd++;
+    taskProgress('levels');
   }
+  if (st.misses === 0) taskProgress('perfect');
+  st.coins = coins; addCoins(coins, 'win');
+  A.track('level_win', { level: st.daily ? 'daily' : st.n, stars: stars, time: Math.round(st.timer.elapsed), misses: st.misses, coins: coins });
   persist();
 }
 function showWin() {
@@ -1777,46 +2512,82 @@ function showWin() {
 }
 
 // ---------------- 道具 ----------------
-var ASSIST_NAME = { hint: '提示', undo: '撤销', remove: '去除' };
-function useAssist(kind, apply) {
+var ITEM_NAME = { hint: '提示', hammer: '锤子', bomb: '炸弹', swap: '交换' };
+var ITEM_DESC = { hint: '点亮一支现在就能飞出的箭', hammer: '直接移走任意一条线', bomb: '清除 3×3 范围内的普通线', swap: '把一条普通线首尾调头' };
+var ASSIST_NAME = ITEM_NAME;
+function useItem(kind, apply) {
   if (save.assists[kind] > 0) { save.assists[kind]--; persist(); apply(); return; }
-  modal = { type: 'ad', kind: kind, t: 0, apply: apply };
+  modal = { type: 'buy', kind: kind, t: 0, apply: apply };
+}
+function cancelMode() { if (st.mode) { st.mode = null; toast('已取消'); } }
+function enterMode(kind) {
+  if (!st || st.won || st.failed) return;
+  if (st.mode === kind) { cancelMode(); return; }
+  st.mode = kind;
+  toast(kind === 'hammer' ? '点选一条要锤掉的线' : kind === 'bomb' ? '点选要炸开的位置（3×3）' : '点选一条要调头的普通线');
+}
+function hintCandidates() {
+  var b = st.board, ms = st.ms, out = [];
+  for (var i = 0; i < b.segs.length; i++) {
+    if (!ms.alive[i] || st.anims[i] || G.tapBlock(b, ms, i)) continue;
+    var ops = G.optionsOf(b, i, ms, false);
+    for (var k = 0; k < ops.length; k++) if (G.blockIndex(G.exitOf(b, i, ops[k], ms), ms.occ, i) < 0) { out.push({ i: i, opt: ops[k] }); break; }
+  }
+  if (!out.length) for (var j = 0; j < b.segs.length; j++) if (ms.alive[j] && !st.anims[j] && b.segs[j].rot && G.removableOpt(b, ms, j, true)) out.push({ i: j, opt: 'rot' });
+  return out;
 }
 function doHint() {
   if (st.won || st.failed) return;
-  var free = [];
-  for (var i = 0; i < st.board.segs.length; i++) if (st.alive[i] && !st.anims[i] && G.isFree(st.board, st.occ, i)) free.push(i);
-  if (!free.length) { toast('稍等，箭还在飞'); return; }
+  var cand = hintCandidates();
+  if (!cand.length) { toast('稍等，箭还在飞'); return; }
   if (st.hint >= 0 && st.alive[st.hint]) { toast('先点亮着的那支箭吧'); return; }
-  useAssist('hint', function () {
-    // 优先提示“能解放其他箭”的那支
-    var bestI = free[0], bestScore = -1;
-    free.forEach(function (f) {
-      var sc = 0, cells = st.board.segs[f].cells;
-      for (var j = 0; j < st.board.segs.length; j++) if (st.alive[j] && j !== f) {
-        var ray = G.rayCells(st.board.w, st.board.h, st.board.segs[j].cells);
-        for (var r = 0; r < ray.length; r++) { var o = st.occ[ray[r]]; if (o >= 0) { if (o === f) sc++; break; } }
+  useItem('hint', function () {
+    // 优先提示“能解放其他箭”的那支（单调规则下任何可出的线都不会走进死局）
+    var b = st.board, best = cand[0], bestScore = -1;
+    cand.forEach(function (c) {
+      var sc = 0;
+      for (var j = 0; j < b.segs.length; j++) if (st.alive[j] && j !== c.i) {
+        var ray = G.exitOf(b, j, null, st.ms).ray;
+        for (var r = 0; r < ray.length; r++) { var o = st.occ[ray[r]]; if (o >= 0 && o !== j) { if (o === c.i) sc++; break; } }
       }
-      if (sc > bestScore) { bestScore = sc; bestI = f; }
+      if (sc > bestScore) { bestScore = sc; best = c; }
     });
-    st.hint = bestI; st.hintT = 8;
-    var hc = st.board.segs[bestI].cells; panToCell(hc[hc.length - 1][0], hc[hc.length - 1][1]);
+    st.hint = best.i; st.hintOpt = best.opt; st.hintT = 8;
+    var hc = b.segs[best.i].cells, hp = best.opt === 'tail' ? hc[0] : hc[hc.length - 1]; panToCell(hp[0], hp[1]);
+    taskProgress('hint');
+    A.track('hint_used', { level: st.daily ? 'daily' : st.n });
   });
 }
-function doUndo() {
-  if (st.won || st.failed) return;
-  if (st.undoUsed) { toast('每关只能撤销一次'); return; }
-  if (st.misses === 0 || st.hearts >= CFG.HEARTS) { toast('还没有失误可以撤销'); return; }
-  useAssist('undo', function () {
-    st.undoUsed = true; st.hearts++; st.misses--;
-    floatText([X0 + 150, SAFE_T + 64], '+1', '#FF8A7A', 44);
-    toast('已撤销上一次失误，恢复 1 颗心');
+function hammerFx(i) { var p = midPx(i); burst(p[0], p[1], 20, 'ink', 200); floatText([p[0], p[1] - 20], '锤！', '#FFE7A0', 36); if (save.vib) P.vibrate(); st.shakeT = 0.2; }
+function bombAt(x, y) {
+  st.mode = null;
+  var v = G.bombVictims(st.board, st.ms, x, y);
+  if (!v.length) { toast('这里没有可炸的普通线'); return; }
+  useItem('bomb', function () {
+    var p = cellPx(x, y); burst(p[0], p[1], 50, 'red', 460); burst(p[0], p[1], 30, 'gold', 380); burst(p[0], p[1], 2, 'blot');
+    st.shakeT = 0.4; if (save.vib) P.vibrate();
+    v.forEach(function (i) { if (st.alive[i]) removeSeg(i, true); });
   });
 }
-function doRemove() {
-  if (st.won || st.failed) return;
-  if (st.removeMode) { st.removeMode = false; toast('已取消去除'); return; }
-  st.removeMode = true; toast('点选一支要去除的箭');
+function swapAt(i) {
+  st.mode = null;
+  var b = st.board, seg = b.segs[i];
+  if (!G.isPlain(seg)) { toast('只能调头普通线'); return; }
+  seg.cells.reverse();
+  var ex = G.exitOf(b, i, null, st.ms), own = {}, selfHit = false;
+  seg.cells.forEach(function (c) { own[c[1] * b.w + c[0]] = 1; });
+  ex.ray.forEach(function (c) { if (own[c]) selfHit = true; });
+  var ok = !selfHit && G.solve(b, st.ms).solvable;
+  seg.cells.reverse();
+  if (!ok) { toast(selfHit ? '调头后会撞上自己，换一条吧' : '调头后会成死局，换一条吧'); return; }
+  useItem('swap', function () {
+    seg.cells.reverse(); st.ver++; st.flash[i] = 0.01; st.tapHL = { i: i, t: 0.6 };
+    var p = midPx(i); burst(p[0], p[1], 14, 'gold', 200); P.play('tap');
+  });
+}
+function doReset() {
+  if (!st || st.won) return;
+  modal = { type: 'reset', t: 0 };
 }
 
 // ---------------- 粒子 ----------------
@@ -1828,6 +2599,8 @@ function spawn(x, y, type, sp) {
   if (type === 'ink') { p.col = 'rgba(30,22,16,0.6)'; p.r = 6 + Math.random() * 10; p.life = 0.7; }
   if (type === 'blot') { p.vx = 0; p.vy = 0; p.r = 30 + Math.random() * 50; p.life = 1.4; p.col = 'rgba(30,25,20,0.3)'; p.rot = Math.random() * 6; }
   if (type === 'petal') { p.col = ['#E8695A', '#F3B8B0', '#FBE09A', '#A3D2B6', '#FFFFFF'][Math.floor(Math.random() * 5)]; p.vx = (Math.random() - 0.5) * 120; p.vy = 60 + Math.random() * 120; p.g = 40; p.drag = 0.3; p.life = 2.6; p.r = 6 + Math.random() * 6; p.rot = Math.random() * 6; p.spin = (Math.random() - 0.5) * 6; }
+  if (type === 'ice') { p.col = Math.random() < 0.5 ? '#E6F7FF' : '#9ED4F5'; p.r = 2 + Math.random() * 4; p.life = 0.6; p.g = 200; }
+  if (type === 'jade') { p.col = Math.random() < 0.5 ? '#B8F0C8' : '#5FBF85'; p.vy -= 30; }
   if (type === 'confetti') { p.col = ['#C8372D', '#6FA98A', '#D4A443', '#2E3A6B'][Math.floor(Math.random() * 4)]; p.g = 500; p.life = 1.6; p.drag = 0.5; }
   parts.push(p);
   if (parts.length > 900) parts.shift();
@@ -1886,13 +2659,28 @@ function drawPlay(c) {
   drawHUD(c);
   drawAssistBar(c);
   // 教学指引
-  var tt = tutTarget();
+  var tt = tutTarget(), mt = st.mtut && !st.mtut.done && st.mtut.t < 12 && st.mtut.target ? st.mtut.target : null;
   if (tt >= 0 && st.alive[tt] && !st.anims[tt] && !st.won) {
     var sg = st.board.segs[tt], mid = sg.cells[Math.floor(sg.cells.length / 2)], pp = cellPx(mid[0], mid[1]);
     D.hand(c, pp[0], pp[1], 1.1, now);
   } else if (st.hint >= 0 && st.alive[st.hint] && !st.anims[st.hint]) {
-    var sh = st.board.segs[st.hint], hm = sh.cells[sh.cells.length - 1], hp = cellPx(hm[0], hm[1]);
-    D.hand(c, hp[0], hp[1], 0.9, now);
+    var sh = st.board.segs[st.hint], hm = st.hintOpt === 'tail' ? sh.cells[0] : sh.cells[sh.cells.length - 1], hp = cellPx(hm[0], hm[1]);
+    var hof2 = Math.max(10, BL.cell * VZ.z * 0.35);
+    D.hand(c, hp[0] + hof2, hp[1] + hof2, 0.9, now);
+    if (st.hintOpt === 'rot') Y.rotArrow(c, hp[0], hp[1], BL.cell * VZ.z * 0.8, 'rgba(255,225,120,0.95)');
+  } else if (mt && !st.won && !modal) {
+    var tp = null;
+    if (mt.cell != null) tp = cellPx(mt.cell % st.board.w, (mt.cell / st.board.w) | 0);
+    else if (st.alive[mt.seg] && !st.anims[mt.seg]) {
+      var ms2 = st.board.segs[mt.seg], tc = st.mtut.m === 'rot' ? ms2.cells[ms2.cells.length - 1] : st.mtut.m === 'bi' ? ms2.cells[0] : ms2.cells[Math.floor(ms2.cells.length / 2)];
+      tp = cellPx(tc[0], tc[1]);
+    }
+    if (tp) {
+      var rr = BL.cell * VZ.z * (0.9 + 0.15 * Math.sin(now * 5));
+      c.save(); c.lineWidth = 4; c.strokeStyle = 'rgba(255,230,140,0.95)'; c.beginPath(); c.arc(tp[0], tp[1], Math.max(18, rr), 0, Math.PI * 2); c.stroke(); c.restore();
+      var hof = Math.max(14, BL.cell * VZ.z * 0.45);
+      D.hand(c, tp[0] + hof, tp[1] + hof, 1.0, now);
+    }
   }
   if (st.won && st.unlock == null && st.winT > 0.2) drawWinBeast(c);
   else if (st.won && st.winT > 0.2) drawWinBeast(c);
@@ -1928,99 +2716,161 @@ function drawWinBeast(c) {
   c.restore();
 }
 
-// 静态线缓存：未在动画/高亮中的线画进离屏画布，按 (缩放, 平移, 局面版本, 动态集合) 失效；每帧只重画动态的线
+// 静态线缓存：未在动画/高亮中的线画进离屏画布，按 (缩放, 平移, 局面版本, 动态集合) 失效；每帧只重画动态的线（200 条线也只在局面变化时重画）
 var lineCache = null;
 function dynamicSet() {
+  // 叠加层：动画中/闪烁/提示/点按高亮的线每帧重画在缓存之上
   var d = {};
   for (var k in st.anims) d[k] = 1;
   for (var f in st.flash) d[f] = 1;
+  for (var sp in st.spin) d[sp] = 1;
   if (st.hint >= 0) d[st.hint] = 1;
   if (st.tapHL) d[st.tapHL.i] = 1;
   var tt = tutTarget(); if (tt >= 0) d[tt] = 1;
   return d;
 }
-function ensureLineCache(dyn) {
-  var key = VZ.z.toFixed(4) + '|' + VZ.px.toFixed(2) + '|' + VZ.py.toFixed(2) + '|' + st.ver + '|' + Object.keys(dyn).join(',') + '|' + st.board.id + st.board.daily;
+// 缓存里要排除的线：会在原位“移动”的（撞线回弹、转盘转动）。已移除的线本来就不在缓存里。
+function excludedSet() {
+  var e = {};
+  for (var k in st.anims) if (st.anims[k].type === 'bump') e[k] = 1;
+  for (var sp in st.spin) e[sp] = 1;
+  return e;
+}
+function ensureLineCache(excl) {
+  var key = VZ.z.toFixed(4) + '|' + VZ.px.toFixed(2) + '|' + VZ.py.toFixed(2) + '|' + st.ver + '|' + Object.keys(excl).join(',') + '|' + st.board.id + st.board.daily;
   var k = scr.dpr * S, W = Math.ceil(VP.w * k), H = Math.ceil(VP.h * k);
   if (!lineCache || lineCache.W !== W || lineCache.H !== H) lineCache = { cv: P.createOffscreen(W, H), W: W, H: H, key: null };
   if (lineCache.key === key) return;
-  lineCache.key = key;
+  lineCache.key = key; lineCache.builds = (lineCache.builds || 0) + 1;
   var c = lineCache.cv.getContext('2d');
   c.setTransform(1, 0, 0, 1, 0, 0); c.clearRect(0, 0, W, H);
   c.setTransform(k, 0, 0, k, -VP.x * k, -VP.y * k);
-  drawCells(c, dyn, false);
+  drawCells(c, excl, false);
 }
+function visibleCell(p, cs) { return !(p[0] < VP.x - cs || p[1] < VP.y - cs || p[0] > VP.x + VP.w + cs || p[1] > VP.y + VP.h + cs); }
 function drawCells(c, dyn, onlyDyn) {
   var b = st.board, cs = BL.cell * VZ.z;
   if (!onlyDyn) {
-    // 空格的小墨点
     c.fillStyle = DOT_COL;
-    var r = Math.max(1.2, cs * 0.06);
+    var r = Math.max(1.2, cs * 0.06), pm = G.pmapOf(b);
     for (var y = 0; y < b.h; y++) for (var x = 0; x < b.w; x++) {
-      if (st.occ[y * b.w + x] >= 0) continue;
+      if (st.occ[y * b.w + x] >= 0 || pm[y * b.w + x] >= 0) continue;
       var p = cellPx(x, y);
-      if (p[0] < VP.x - cs || p[1] < VP.y - cs || p[0] > VP.x + VP.w + cs || p[1] > VP.y + VP.h + cs) continue;
+      if (!visibleCell(p, cs)) continue;
       c.beginPath(); c.arc(p[0], p[1], r, 0, Math.PI * 2); c.fill();
     }
   }
+  var glowAll = st.mode === 'hammer' || st.mode === 'swap' || st.mode === 'bomb';
   for (var i = 0; i < b.segs.length; i++) {
     var a = st.anims[i];
     if (!st.alive[i] && !a) continue;
-    if (!!dyn[i] !== !!onlyDyn) continue;
+    if (onlyDyn ? !dyn[i] : (!st.alive[i] || dyn[i])) continue; // 缓存：活着且未排除；叠加层：dyn 集合
     var s = a && a.s ? a.s : 0, alpha = 1, scale = 1;
     if (a && a.type === 'exit') alpha = Math.max(0, Math.min(1, (a.dist - s) / 2));
     if (a && a.type === 'dissolve') { alpha = 1 - a.t / 0.5; scale = 1 + a.t * 0.6; }
     var glow = 0, glowCol = null;
     if (st.hint === i) { glow = 0.55 + 0.45 * Math.sin(now * 7); glowCol = '255,215,90'; }
-    else if (st.removeMode && st.alive[i]) { glow = 0.3 + 0.25 * Math.sin(now * 6); glowCol = '255,215,90'; }
+    else if (glowAll && st.alive[i] && (st.mode === 'hammer' || G.isPlain(b.segs[i]))) { glow = 0.3 + 0.25 * Math.sin(now * 6); glowCol = '255,215,90'; }
     if (st.tapHL && st.tapHL.i === i) { glow = Math.max(glow, st.tapHL.t / 0.35); glowCol = '255,255,255'; }
-    drawArrow(c, b.segs[i], s, alpha, st.flash[i] || 0, glow, glowCol, scale);
+    drawArrow(c, i, s, alpha, st.flash[i] || 0, glow, glowCol, scale);
+  }
+  if (!onlyDyn) {
+    // 锁链（配对两线交界处）
+    for (var l = 0; l < st.links.length; l++) {
+      var lk = st.links[l]; if (!st.alive[lk.a] || !st.alive[lk.b]) continue;
+      var lp = cellPx(lk.x, lk.y); if (visibleCell(lp, cs)) Y.chain(c, lp[0], lp[1], cs, lk.horiz);
+    }
   }
 }
+function drawPortals(c) {
+  var b = st.board; if (!b.portals || !b.portals.length) return;
+  var cs = BL.cell * VZ.z;
+  b.portals.forEach(function (pp, k) {
+    var cols = Y.PORTAL_COLS[k % Y.PORTAL_COLS.length];
+    pp.forEach(function (cell) { var p = cellPx(cell % b.w, (cell / b.w) | 0); if (visibleCell(p, cs)) Y.portal(c, p[0], p[1], cs, cols, now); });
+  });
+}
 function drawSegments(c) {
-  var dyn = st.removeMode ? null : dynamicSet();
+  var dyn = st.mode ? null : dynamicSet();
   c.save();
   c.beginPath(); c.rect(VP.x - 1, VP.y - 1, VP.w + 2, VP.h + 2); c.clip();
   if (dyn) {
-    ensureLineCache(dyn);
+    ensureLineCache(excludedSet());
     c.drawImage(lineCache.cv, VP.x, VP.y, VP.w, VP.h);
+    drawPortals(c);
     drawCells(c, dyn, true);
   } else {
-    drawCells(c, {}, false); // 去除模式：全部线都在闪，直接逐帧画
+    drawCells(c, {}, false); // 道具选择模式：全部线都在闪，直接逐帧画
+    drawPortals(c);
   }
   c.restore();
 }
 
-// 细线 + 圆角折点 + 小而利落的箭头
-function drawArrow(c, seg, s, alpha, flash, glow, glowCol, scale) {
-  var cell = BL.cell * VZ.z, col = COLORS[seg.color % COLORS.length];
-  var pts = segPoly(seg, s).map(function (p) { return cellPx(p[0], p[1]); }), L = pts.length;
-  var d0 = G.headDir(seg.cells), dx = d0[0], dy = d0[1];
-  var hp = pts[L - 1], w = Math.max(1.6, cell * 0.27);
-  c.save(); c.globalAlpha = alpha;
-  if (scale !== 1) { var m = pts[Math.floor(L / 2)]; c.translate(m[0], m[1]); c.scale(scale, scale); c.translate(-m[0], -m[1]); }
+// 细线 + 圆角折点 + 小而利落的箭头；机关：冰霜/冰牌、铜锁、玉钥、双头、转盘、炸弹
+function drawArrow(c, i, s, alpha, flash, glow, glowCol, scale) {
+  var seg = st.board.segs[i], a = st.anims[i], ms = st.ms, cell = BL.cell * VZ.z, col = COLORS[seg.color % COLORS.length];
+  var L = seg.cells.length, moving = a && a.path && s > 0;
+  var runs = moving ? polyRuns(a.path, s, L) : [seg.cells];
+  runs = runs.map(function (r) { return r.map(function (p) { return cellPx(p[0], p[1]); }); });
+  var lastRun = runs[runs.length - 1], hp = lastRun[lastRun.length - 1];
+  var d0 = moving ? a.dir : staticDir(i), ang = Math.atan2(d0[1], d0[0]);
+  if (!moving && seg.rot && st.spin[i]) {
+    var sp = st.spin[i], u = Math.min(1, sp.t / 0.2), a0 = Math.atan2(G.DIRS[sp.from][1], G.DIRS[sp.from][0]), a1 = Math.atan2(G.DIRS[sp.to][1], G.DIRS[sp.to][0]);
+    var da = a1 - a0; while (da < 0) da += Math.PI * 2; while (da > Math.PI * 2) da -= Math.PI * 2;
+    ang = a0 + da * (1 - (1 - u) * (1 - u));
+  }
+  var w = Math.max(1.6, cell * 0.28);
+  var locked = seg.lock != null && st.alive[seg.lock], iced = ms.ice[i] > 0;
+  c.save(); c.globalAlpha = alpha * (locked && !moving ? 0.82 : 1);
+  if (scale !== 1) { var m = runs[0][Math.floor(runs[0].length / 2)]; c.translate(m[0], m[1]); c.scale(scale, scale); c.translate(-m[0], -m[1]); }
   c.lineCap = 'round'; c.lineJoin = 'round';
   function path() {
-    c.beginPath(); c.moveTo(pts[0][0], pts[0][1]);
-    for (var i = 1; i < L; i++) c.lineTo(pts[i][0], pts[i][1]);
-  }
-  var tipL = cell * 0.4, hw = cell * 0.25, back = cell * 0.04, nx = -dy, ny = dx;
-  function head(g) {
-    var bx = hp[0] - dx * back, by = hp[1] - dy * back;
     c.beginPath();
-    c.moveTo(hp[0] + dx * (tipL + g), hp[1] + dy * (tipL + g));
+    for (var r = 0; r < runs.length; r++) { var pts = runs[r]; c.moveTo(pts[0][0], pts[0][1]); for (var k = 1; k < pts.length; k++) c.lineTo(pts[k][0], pts[k][1]); if (pts.length === 1) c.lineTo(pts[0][0] + 0.01, pts[0][1]); }
+  }
+  var tipL = cell * 0.42, hw = cell * 0.26, back = cell * 0.04;
+  function head(px, py, an, g) {
+    var dx = Math.cos(an), dy = Math.sin(an), nx = -dy, ny = dx, bx = px - dx * back, by = py - dy * back;
+    c.beginPath();
+    c.moveTo(px + dx * (tipL + g), py + dy * (tipL + g));
     c.lineTo(bx + nx * (hw + g) - dx * g, by + ny * (hw + g) - dy * g);
     c.lineTo(bx - nx * (hw + g) - dx * g, by - ny * (hw + g) - dy * g);
     c.closePath();
   }
+  var tail2 = seg.bi && !moving, tp = null, tang = 0;
+  if (tail2) { tp = cellPx(seg.cells[0][0], seg.cells[0][1]); var td = [seg.cells[0][0] - seg.cells[1][0], seg.cells[0][1] - seg.cells[1][1]]; tang = Math.atan2(td[1], td[0]); }
+  if (iced && !moving) Y.frost(c, path, w);
   if (glow > 0) {
     c.strokeStyle = 'rgba(' + glowCol + ',' + (0.5 * glow) + ')'; c.lineWidth = w + cell * 0.36; path(); c.stroke();
-    c.fillStyle = 'rgba(' + glowCol + ',' + (0.5 * glow) + ')'; head(cell * 0.16); c.fill();
+    c.fillStyle = 'rgba(' + glowCol + ',' + (0.5 * glow) + ')'; head(hp[0], hp[1], ang, cell * 0.16); c.fill();
+    if (tail2) { head(tp[0], tp[1], tang, cell * 0.16); c.fill(); }
   }
   var base = col;
   if (flash > 0 && Math.sin(flash * 30) > 0) base = '#FF4A3A';
+  // 转盘在箭头之下
+  if (seg.rot && !moving) Y.disc(c, hp[0], hp[1], cell * 1.05, st.spin[i] ? st.spin[i].t * 8 : 0);
   c.strokeStyle = base; c.lineWidth = w; path(); c.stroke();
-  c.fillStyle = base; c.lineWidth = Math.max(1, cell * 0.05); c.strokeStyle = base; head(0); c.fill(); c.stroke();
+  c.fillStyle = base; c.lineWidth = Math.max(1, cell * 0.05); c.strokeStyle = base;
+  if (seg.rot && !moving) {
+    // 转盘上的箭头：从盘心指出
+    var dx = Math.cos(ang), dy = Math.sin(ang);
+    head(hp[0] + dx * cell * 0.05, hp[1] + dy * cell * 0.05, ang, 0); c.fill(); c.stroke();
+    c.lineWidth = Math.max(1, cell * 0.06); c.strokeStyle = '#2A1A08'; c.stroke();
+  } else { head(hp[0], hp[1], ang, 0); c.fill(); c.stroke(); }
+  if (tail2) {
+    c.fillStyle = base; c.strokeStyle = base; c.lineWidth = Math.max(1, cell * 0.05); head(tp[0], tp[1], tang, 0); c.fill(); c.stroke();
+    // 双头线：两端各加一个小白点，强调“两头都能飞”
+    c.fillStyle = 'rgba(255,255,255,0.9)'; c.beginPath(); c.arc(tp[0], tp[1], Math.max(1.2, cell * 0.08), 0, Math.PI * 2); c.arc(hp[0], hp[1], Math.max(1.2, cell * 0.08), 0, Math.PI * 2); c.fill();
+  }
+  // 机关标记（画在线中段）
+  if (!moving && alpha > 0.05) {
+    var mc = seg.cells[Math.floor(L / 2)], mp = cellPx(mc[0], mc[1]), pc = Y.PAIR_COLS[(seg.pair || 0) % Y.PAIR_COLS.length];
+    if (iced) Y.ice(c, mp[0], mp[1], cell * 0.95, ms.ice[i], seg.ice);
+    else if (locked) Y.lock(c, mp[0], mp[1], cell * 0.95, pc);
+    else if (seg.key != null && st.alive[seg.key]) Y.key(c, mp[0], mp[1], cell * 0.95, pc);
+    else if (seg.bomb) Y.bomb(c, mp[0], mp[1], cell * 0.95, 0);
+    else if (seg.chain != null && st.alive[seg.chain]) Y.chainBadge(c, mp[0], mp[1], cell * 0.95, pc);
+  }
   c.restore();
 }
 
@@ -2081,17 +2931,29 @@ function drawHUD(c) {
   var sub = st.daily ? ('每日挑战 · ' + st.daily) : (st.n === 1 ? '点击箭，它会沿箭头方向飞出' : (st.n % 10 === 0 ? '守关之战 · ' + b.name : '第' + cnNum(chapterOf(st.n) + 1) + '章 · ' + b.place + ' · 守关异兽 ' + b.name));
   if (st.n === 1 && st.tut === 1) sub = '被挡住的箭飞不出去，要先清开前路';
   if (st.n === 1 && st.tut === 2) sub = '最后一支，点它！';
-  if (st.removeMode) sub = '点选一支要去除的箭（点空白处取消）';
+  if (st.mtut && !st.mtut.done && st.mtut.t < 15) sub = '新机关 · ' + MECH_SHORT[st.mtut.m];
+  if (st.mode) sub = { hammer: '锤子：点选一条线移走（点空白处取消）', bomb: '炸弹：点选位置，炸开 3×3 普通线', swap: '交换：点选一条普通线调头' }[st.mode];
   var sy = y + h + 34, cx0 = VW / 2, maxW = LW - 40, fs = 28;
   if (T.active(st.timer)) {
     var tw0 = drawTimer(c, X0 + 18, sy);
     var l = X0 + 18 + tw0 + 12, r = X0 + LW - 18; cx0 = (l + r) / 2; maxW = r - l;
   }
+  if (st.comboShow) { maxW -= 180; cx0 -= 90; }
   c.font = '700 ' + fs + 'px ' + D.FONT_T; var tw = c.measureText(sub).width + 50;
-  while (tw > maxW && fs > 20) { fs -= 2; c.font = '700 ' + fs + 'px ' + D.FONT_T; tw = c.measureText(sub).width + 44; }
+  while (tw > maxW && fs > 16) { fs -= 2; c.font = '700 ' + fs + 'px ' + D.FONT_T; tw = c.measureText(sub).width + 44; }
+  while (tw > maxW && sub.length > 4) { sub = sub.slice(0, -2) + '…'; tw = c.measureText(sub).width + 44; }
   tw = Math.min(tw, maxW);
-  D.rr(c, cx0 - tw / 2, sy - 24, tw, 48, 24); c.fillStyle = st.removeMode ? 'rgba(126,26,19,0.85)' : 'rgba(70,40,15,0.72)'; c.fill();
+  D.rr(c, cx0 - tw / 2, sy - 24, tw, 48, 24); c.fillStyle = st.mode ? 'rgba(126,26,19,0.85)' : (st.mtut && !st.mtut.done && st.mtut.t < 15 ? 'rgba(38,92,70,0.88)' : 'rgba(70,40,15,0.72)'); c.fill();
   D.text(c, sub, cx0, sy + 1, fs, '#FBEBC4', { title: true });
+  // 连击：放在副标题条右端（不再飘在棋盘上遮挡线）
+  if (st.comboShow) {
+    var cu = st.comboShow.t, ca = Math.min(1, cu * 8, (1.4 - cu) * 4), csc = 1 + 0.25 * Math.max(0, 1 - cu * 6);
+    var cx2 = X0 + LW - 92, cy2 = sy;
+    c.save(); c.globalAlpha = Math.max(0, ca); c.translate(cx2, cy2); c.scale(csc, csc);
+    D.rr(c, -78, -26, 156, 52, 26); c.fillStyle = 'rgba(126,26,19,0.95)'; c.fill(); c.lineWidth = 3; c.strokeStyle = '#F3D27E'; c.stroke();
+    D.text(c, '连击 ×' + st.comboShow.n, 0, 1, 28, '#FFE7A0', { title: true });
+    c.restore();
+  }
 }
 
 // 倒计时：沙漏圆钮 + mm:ss + 细进度条（最后 10 秒变红、跳动）
@@ -2133,14 +2995,25 @@ function openBeastPeek(b) {
   if (beastUnlocked(idx)) openBeast(b); else toast('通关第 ' + (idx + 1) * 10 + ' 关，收服' + b.name);
 }
 
+function itemIcon(c, key, cx, cy, size, kind, label, cb, opt) {
+  opt = opt || {};
+  var pr = isPressed(key) ? 0.92 : 1, sz = size * pr;
+  if (kind === 'hint') roundIcon(c, key, cx, cy, size, IMG.ic_hint, label, cb, opt);
+  else {
+    Y.jade(c, cx, cy, sz); Y.itemGlyph(c, kind, cx, cy, sz, now);
+    roundIcon(c, key, cx, cy, size, null, label, cb, opt);
+  }
+  if (opt.active) { c.lineWidth = 5; c.strokeStyle = 'rgba(255,220,120,' + (0.6 + 0.4 * Math.sin(now * 8)) + ')'; c.beginPath(); c.arc(cx, cy, size / 2 + 10, 0, Math.PI * 2); c.stroke(); }
+}
 function drawAssistBar(c) {
-  var y = VH - SAFE_B - 112, xs = [X0 + 100, X0 + 283, X0 + 467, X0 + 650];
-  var a = save.assists;
-  roundIcon(c, 'hint', xs[0], y, 124, IMG.ic_hint, '提示', doHint, { badge: a.hint > 0 ? a.hint : 'ad' });
-  roundIcon(c, 'undo', xs[1], y, 124, IMG.ic_heartplus, '撤销', doUndo, { badge: a.undo > 0 ? a.undo : 'ad', disabled: st.undoUsed || st.misses === 0 });
-  roundIcon(c, 'remove', xs[2], y, 124, IMG.ic_remove, '去除', doRemove, { badge: a.remove > 0 ? a.remove : 'ad' });
-  if (st.removeMode) { c.lineWidth = 5; c.strokeStyle = 'rgba(255,220,120,' + (0.6 + 0.4 * Math.sin(now * 8)) + ')'; c.beginPath(); c.arc(xs[2], y, 70, 0, Math.PI * 2); c.stroke(); }
-  roundIcon(c, 'pcodex', xs[3], y, 118, IMG.scroll, '图鉴', openCodex, { framed: true });
+  var y = VH - SAFE_B - 108, a = save.assists, sz = 104, xs = [];
+  for (var k = 0; k < 5; k++) xs.push(X0 + 75 + k * 150);
+  function badge(kind) { return a[kind] > 0 ? a[kind] : 'coin'; }
+  itemIcon(c, 'hint', xs[0], y, sz, 'hint', '提示', doHint, { badge: badge('hint') });
+  itemIcon(c, 'hammer', xs[1], y, sz, 'hammer', '锤子', function () { enterMode('hammer'); }, { badge: badge('hammer'), active: st.mode === 'hammer' });
+  itemIcon(c, 'ibomb', xs[2], y, sz, 'bomb', '炸弹', function () { enterMode('bomb'); }, { badge: badge('bomb'), active: st.mode === 'bomb' });
+  itemIcon(c, 'swap', xs[3], y, sz, 'swap', '交换', function () { enterMode('swap'); }, { badge: badge('swap'), active: st.mode === 'swap' });
+  itemIcon(c, 'reset', xs[4], y, sz, 'reset', '重置', doReset, { badge: '免费' });
 }
 
 // ---------------- 弹窗 ----------------
@@ -2152,7 +3025,7 @@ function closeModal() { modal = null; }
 function drawModal(c) {
   modal.t += 1 / 60;
   c.fillStyle = 'rgba(20,12,5,' + Math.min(0.6, modal.t * 4) + ')'; c.fillRect(0, 0, VW, VH);
-  region('modal-bg', 0, 0, VW, VH, function () { if (modal && modal.dismissable !== false && ['beast', 'settings', 'checkin', 'daily'].indexOf(modal.type) >= 0) closeModal(); }, { modal: true });
+  region('modal-bg', 0, 0, VW, VH, function () { if (modal && modal.dismissable !== false && ['beast', 'settings', 'checkin', 'daily', 'tasks'].indexOf(modal.type) >= 0) closeModal(); }, { modal: true });
   var u = Math.min(1, modal.t / 0.22), sc = 0.85 + 0.15 * (1 - Math.pow(1 - u, 3));
   c.save(); c.translate(VW / 2, VH / 2); c.scale(sc, sc); c.translate(-VW / 2, -VH / 2); c.globalAlpha = u;
   var f = MODALS[modal.type]; if (f) f(c);
@@ -2175,113 +3048,171 @@ function closeX(c, x, y) {
 
 var MODALS = {
   win: function (c) {
-    var tinfo = T.active(st.timer) ? 44 : 0;
-    var w = 600, h = 560 + tinfo + (st.unlock ? 280 : 0) + (st.dailyReward ? 60 : 0), x = VW / 2 - w / 2, y = VH / 2 - h / 2;
+    var w = 600, h = 690 + (st.unlock ? 270 : 0), x = VW / 2 - w / 2, y = VH / 2 - h / 2;
     D.panel(c, x, y, w, h);
-    var title = st.daily ? '每日挑战完成' : (st.n % 10 === 0 ? '守关告捷' : '破阵成功');
-    D.text(c, title, VW / 2, y + 78, 60, '#7A2A1C', { title: true, shadow: 'rgba(212,164,67,0.6)', sy: 3 });
-    D.text(c, st.daily ? st.daily : '第 ' + st.n + ' 关', VW / 2, y + 136, 30, '#6B4A26', { title: true });
+    var title = st.daily ? '每日挑战完成' : (st.n % 10 === 0 ? '守关告捷' : '关卡完成');
+    D.text(c, title, VW / 2, y + 74, 58, '#7A2A1C', { title: true, shadow: 'rgba(212,164,67,0.6)', sy: 3 });
+    D.text(c, st.daily ? st.daily : '第 ' + st.n + ' 关', VW / 2, y + 128, 28, '#6B4A26', { title: true });
     for (var i = 0; i < 3; i++) {
-      var tt = modal.t - 0.25 - i * 0.22, sx = VW / 2 + (i - 1) * 130, sy2 = y + 240 - (i === 1 ? 22 : 0);
-      if (IMG.star_empty) c.drawImage(IMG.star_empty, sx - 52, sy2 - 52, 104, 104);
+      var tt = modal.t - 0.25 - i * 0.22, sx = VW / 2 + (i - 1) * 130, sy2 = y + 222 - (i === 1 ? 22 : 0);
+      if (IMG.star_empty) c.drawImage(IMG.star_empty, sx - 50, sy2 - 50, 100, 100);
       if (i < st.stars && tt > 0) {
         if (!modal['s' + i]) { modal['s' + i] = 1; P.play('pluck' + (3 + i * 2)); burst(sx, sy2, 18, 'gold', 300); }
-        var k = Math.min(1, tt / 0.25), s = 1 + (1 - k) * 1.2;
-        c.save(); c.globalAlpha = k; c.translate(sx, sy2); c.scale(s, s); if (IMG.star) c.drawImage(IMG.star, -56, -56, 112, 112); c.restore();
+        var k = Math.min(1, tt / 0.25), sc = 1 + (1 - k) * 1.2;
+        c.save(); c.globalAlpha = k; c.translate(sx, sy2); c.scale(sc, sc); if (IMG.star) c.drawImage(IMG.star, -54, -54, 108, 108); c.restore();
       }
     }
-    var yy = y + 330;
-    if (tinfo) {
-      var tm = st.timer;
-      D.text(c, '用时 ' + T.fmt(tm.elapsed) + ' · 剩余 ' + T.fmt(tm.left), VW / 2, y + 330, 28, tm.left <= (CFG.TIMER_WARN_SECONDS || 10) ? '#C8372D' : '#2C5B44', { title: true });
-      yy += tinfo + 10;
+    // 用时 / 失误 / 金币
+    var ry = y + 300, cw = (w - 80) / 3, tm = st.timer;
+    var cols = [
+      ['用时', T.active(tm) ? T.fmt(tm.elapsed) : '—', st.starTime ? '三星 ≤ ' + T.fmt(st.starTime) : '不计用时', st.starTime && tm.elapsed > st.starTime ? '#C8372D' : '#2C5B44'],
+      ['失误', String(st.misses), st.misses ? '零失误得三星' : '完美！', st.misses ? '#C8372D' : '#2C5B44'],
+      ['金币', '+' + (st.coins * (st.doubled ? 2 : 1)), st.doubled ? '已翻倍' : '', '#8A5A10']
+    ];
+    for (var q = 0; q < 3; q++) {
+      var cx = x + 40 + cw * q + cw / 2;
+      D.rr(c, cx - cw / 2 + 6, ry, cw - 12, 132, 16); c.fillStyle = 'rgba(122,42,28,0.08)'; c.fill(); c.lineWidth = 2; c.strokeStyle = 'rgba(176,128,48,0.55)'; c.stroke();
+      D.text(c, cols[q][0], cx, ry + 26, 24, '#6B4A26', { title: true });
+      if (q === 2 && IMG.coin) c.drawImage(IMG.coin, cx - 70, ry + 46, 38, 38);
+      D.text(c, cols[q][1], cx + (q === 2 ? 16 : 0), ry + 66, 40, cols[q][3], { title: true });
+      if (cols[q][2]) D.text(c, cols[q][2], cx, ry + 108, 19, '#8A6A40');
     }
-    if (st.dailyReward) { D.text(c, '首次完成奖励：提示 ×1', VW / 2, yy, 30, '#2C5B44', { title: true }); yy += 60; }
+    var yy = ry + 158;
     if (st.unlock) {
       var b = st.unlock, im = BIMG[b.id];
-      D.rr(c, x + 50, yy - 10, w - 100, 250, 22); c.fillStyle = 'rgba(122,42,28,0.1)'; c.fill(); c.lineWidth = 2; c.strokeStyle = 'rgba(176,128,48,0.6)'; c.stroke();
-      if (im) { var s3 = 200 / Math.max(im.width, im.height); c.drawImage(im, x + 70 + (200 - im.width * s3) / 2, yy + 15 + (200 - im.height * s3) / 2, im.width * s3, im.height * s3); }
+      D.rr(c, x + 50, yy - 6, w - 100, 240, 22); c.fillStyle = 'rgba(122,42,28,0.1)'; c.fill(); c.lineWidth = 2; c.strokeStyle = 'rgba(176,128,48,0.6)'; c.stroke();
+      if (im) { var s3 = 190 / Math.max(im.width, im.height); c.drawImage(im, x + 70 + (190 - im.width * s3) / 2, yy + 18 + (190 - im.height * s3) / 2, im.width * s3, im.height * s3); }
       D.text(c, '收服异兽', x + 400, yy + 50, 30, '#6B4A26', { title: true });
       D.text(c, b.name, x + 400, yy + 110, 60, '#7A2A1C', { title: true });
       D.text(c, '已收入《异兽图鉴》', x + 400, yy + 170, 24, '#6B4A26');
-      region('unlockcard', x + 50, yy - 10, w - 100, 250, function () { var bb = st.unlock; modal = { type: 'beast', b: bb, t: 0, back: 'win' }; }, { modal: true });
-      yy += 280;
+      region('unlockcard', x + 50, yy - 6, w - 100, 240, function () { var bb = st.unlock; modal = { type: 'beast', b: bb, t: 0, back: 'win' }; }, { modal: true });
+      yy += 270;
     }
+    // 看广告翻倍（自愿，每关一次）
+    if (CFG.WIN_AD_DOUBLE && !st.doubled) {
+      mbtn(c, 'w-double', VW / 2 - 200, yy, 400, 76, '看广告 金币翻倍', 'jade', function () {
+        rewardedAd('win_double').then(function (r) {
+          if (r.msg) toast(r.msg);
+          if (r.ok && !st.doubled) { st.doubled = true; addCoins(st.coins, 'double'); toast('金币翻倍 +' + st.coins); burst(VW / 2, yy + 38, 30, 'gold', 360); }
+        });
+      }, { size: 30 });
+    } else D.text(c, '金币已翻倍', VW / 2, yy + 38, 26, '#2C5B44', { title: true });
     if (st.daily) {
-      mbtn(c, 'w-home', VW / 2 - 170, y + h - 160, 340, 104, '返回主页', 'red', function () { modal = null; scene = 'menu'; });
+      mbtn(c, 'w-home', VW / 2 - 170, y + h - 128, 340, 96, '返回主页', 'red', function () { modal = null; scene = 'menu'; });
       return;
     }
     var hasNext = st.n < CFG.TOTAL_LEVELS;
-    mbtn(c, 'w-next', VW / 2 - 200, y + h - 212, 400, 104, hasNext ? '下一关' : '全部通关', 'red', function () {
+    mbtn(c, 'w-next', VW / 2 - 290, y + h - 128, 300, 96, hasNext ? '下一关' : '全部通关', 'red', function () {
       if (!hasNext) { modal = null; scene = 'menu'; return; }
       var n = st.n + 1;
       if (n >= CFG.INTERSTITIAL_MIN_LEVEL && save.winsSinceAd >= CFG.INTERSTITIAL_EVERY_WINS) { save.winsSinceAd = 0; persist(); P.showInterstitial(); }
       startLevel(n);
-    }, { size: 44 });
-    mbtn(c, 'w-sel', VW / 2 - 200, y + h - 92, 190, 66, '选关', 'wood', function () { modal = null; openLevels(); }, { size: 28 });
-    mbtn(c, 'w-retry', VW / 2 + 10, y + h - 92, 190, 66, '再玩一次', 'wood', function () { startLevel(st.n); }, { size: 28 });
+    }, { size: 42 });
+    mbtn(c, 'w-sel', VW / 2 + 26, y + h - 128, 126, 96, '选关', 'wood', function () { modal = null; openLevels(); }, { size: 28 });
+    mbtn(c, 'w-retry', VW / 2 + 164, y + h - 128, 126, 96, '再玩', 'wood', function () { startLevel(st.n, null, true); }, { size: 28 });
   },
   fail: function (c) {
-    var w = 580, h = 560, x = VW / 2 - w / 2, y = VH / 2 - h / 2;
+    var w = 580, h = 620, x = VW / 2 - w / 2, y = VH / 2 - h / 2, total = st.board.segs.length, left = total - st.removedCount;
     D.panel(c, x, y, w, h);
-    D.text(c, '箭阵未破', VW / 2, y + 82, 60, '#7A2A1C', { title: true });
-    D.text(c, cnNum(CFG.HEARTS) + '颗心已用尽，异兽仍被困阵中', VW / 2, y + 150, 28, '#6B4A26');
-    if (IMG.heart) { c.save(); c.globalAlpha = 0.85; c.drawImage(IMG.heart, VW / 2 - 50, y + 190, 100, 96); c.restore(); }
-    D.text(c, '+1', VW / 2 + 70, y + 240, 44, '#C8372D', { title: true });
-    mbtn(c, 'f-revive', VW / 2 - 210, y + 320, 420, 100, '看广告复活', 'jade', function () {
-      P.showRewarded().then(function (r) {
-        if (r.msg) toast(r.msg);
-        if (r.ok) { st.hearts = 1; st.failed = false; st.revived = true; modal = null; }
-      });
-    }, { size: 40 });
-    mbtn(c, 'f-retry', VW / 2 - 210, y + 446, 200, 76, '重新开始', 'red', function () { startLevel(st.n, st.daily); }, { size: 30 });
-    mbtn(c, 'f-home', VW / 2 + 10, y + 446, 200, 76, '返回主页', 'wood', function () { modal = null; scene = 'menu'; }, { size: 30 });
+    D.text(c, '差一点就成功', VW / 2, y + 80, 58, '#7A2A1C', { title: true });
+    D.text(c, '还剩 ' + left + ' 支箭 · ' + cnNum(CFG.HEARTS) + '颗心已用尽', VW / 2, y + 144, 28, '#6B4A26');
+    progressBar(c, x + 70, y + 180, w - 140, st.removedCount / total);
+    if (!st.heartRevived) {
+      if (IMG.heart) { c.save(); c.globalAlpha = 0.9; c.drawImage(IMG.heart, VW / 2 - 92, y + 238, 84, 80); c.restore(); }
+      D.text(c, '+' + CFG.REVIVE_HEARTS, VW / 2 + 34, y + 280, 46, '#C8372D', { title: true });
+      mbtn(c, 'f-revive', VW / 2 - 210, y + 344, 420, 100, '看广告 继续挑战', 'jade', function () {
+        rewardedAd('revive_hearts').then(function (r) {
+          if (r.msg) toast(r.msg);
+          if (r.ok && st.failed && !st.timeUp) { st.hearts = CFG.REVIVE_HEARTS; st.failed = false; st.heartRevived = true; modal = null; }
+        });
+      }, { size: 38 });
+    } else D.text(c, '本关复活次数已用完', VW / 2, y + 300, 30, '#8A6214', { title: true });
+    mbtn(c, 'f-retry', VW / 2 - 210, y + 476, 200, 84, '再试一次', 'red', function () { startLevel(st.n, st.daily, true); }, { size: 32 });
+    mbtn(c, 'f-home', VW / 2 + 10, y + 476, 200, 84, '返回主页', 'wood', function () { modal = null; scene = 'menu'; }, { size: 30 });
   },
   timeup: function (c) {
     var t = st.timer, can = T.canRevive(t), left = (CFG.TIMER_REVIVES_PER_LEVEL || 0) - t.revives;
-    var w = 580, h = 600, x = VW / 2 - w / 2, y = VH / 2 - h / 2;
+    var w = 580, h = 640, x = VW / 2 - w / 2, y = VH / 2 - h / 2, total = st.board.segs.length;
     D.panel(c, x, y, w, h);
-    D.text(c, '时间到', VW / 2, y + 84, 64, '#7A2A1C', { title: true, shadow: 'rgba(212,164,67,0.6)', sy: 3 });
-    D.text(c, '沙漏已尽，还剩 ' + st.alive.filter(Boolean).length + ' 支箭未破', VW / 2, y + 150, 28, '#6B4A26');
-    // 沙漏
-    var hx = VW / 2 - (can ? 60 : 0), hy = y + 245, k = 1 + 0.04 * Math.sin(now * 5);
+    D.text(c, '时间到', VW / 2, y + 80, 62, '#7A2A1C', { title: true, shadow: 'rgba(212,164,67,0.6)', sy: 3 });
+    D.text(c, '差一点就成功 · 还剩 ' + (total - st.removedCount) + ' 支箭', VW / 2, y + 144, 28, '#6B4A26');
+    progressBar(c, x + 70, y + 176, w - 140, st.removedCount / total);
+    var hx = VW / 2 - (can ? 60 : 0), hy = y + 280, k = 1 + 0.04 * Math.sin(now * 5);
     c.save(); c.translate(hx, hy); c.scale(k, k);
     c.fillStyle = '#7A4A1C'; D.rr(c, -46, -62, 92, 12, 6); c.fill(); D.rr(c, -46, 50, 92, 12, 6); c.fill();
     c.beginPath(); c.moveTo(-36, -50); c.lineTo(36, -50); c.lineTo(6, 0); c.lineTo(36, 50); c.lineTo(-36, 50); c.lineTo(-6, 0); c.closePath();
     c.fillStyle = 'rgba(255,248,230,0.85)'; c.fill(); c.lineWidth = 3; c.strokeStyle = '#B4832E'; c.stroke();
     c.beginPath(); c.moveTo(-30, 46); c.lineTo(30, 46); c.lineTo(0, 16); c.closePath(); c.fillStyle = '#D9A441'; c.fill();
     c.restore();
-    if (can) D.text(c, '+' + CFG.TIMER_REVIVE_SECONDS + '秒', VW / 2 + 70, hy + 4, 50, '#2C7A55', { title: true });
     if (can) {
-      mbtn(c, 'tu-revive', VW / 2 - 220, y + 340, 440, 104, '看广告 +' + CFG.TIMER_REVIVE_SECONDS + '秒 继续', 'jade', function () {
-        P.showRewarded().then(function (r) {
+      D.text(c, '+' + CFG.TIMER_REVIVE_SECONDS + '秒', VW / 2 + 70, hy + 4, 50, '#2C7A55', { title: true });
+      mbtn(c, 'tu-revive', VW / 2 - 220, y + 372, 440, 100, '看广告 +' + CFG.TIMER_REVIVE_SECONDS + '秒 继续', 'jade', function () {
+        rewardedAd('revive_time').then(function (r) {
           if (r.msg) toast(r.msg);
           if (r.ok && st && st.timeUp) reviveTime();
         });
-      }, { size: 36 });
-      D.text(c, '本关还可续时 ' + left + ' 次', VW / 2, y + 470, 24, '#8A6214');
+      }, { size: 34 });
+      D.text(c, '本关还可续时 ' + left + ' 次', VW / 2, y + 496, 24, '#8A6214');
     } else {
-      D.text(c, '本关续时次数已用完', VW / 2, y + 390, 30, '#8A6214', { title: true });
+      D.text(c, '本关续时次数已用完', VW / 2, y + 420, 30, '#8A6214', { title: true });
     }
-    mbtn(c, 'tu-retry', VW / 2 - 210, y + 498, 200, 76, '重来', 'red', function () { startLevel(st.n, st.daily); }, { size: 34 });
-    mbtn(c, 'tu-home', VW / 2 + 10, y + 498, 200, 76, '返回主页', 'wood', function () { modal = null; scene = 'menu'; }, { size: 30 });
+    mbtn(c, 'tu-retry', VW / 2 - 210, y + 528, 200, 80, '再试一次', 'red', function () { startLevel(st.n, st.daily, true); }, { size: 32 });
+    mbtn(c, 'tu-home', VW / 2 + 10, y + 528, 200, 80, '返回主页', 'wood', function () { modal = null; scene = 'menu'; }, { size: 30 });
   },
-  ad: function (c) {
-    var w = 560, h = 470, x = VW / 2 - w / 2, y = VH / 2 - h / 2, kind = modal.kind;
+  buy: function (c) {
+    var w = 580, h = 560, x = VW / 2 - w / 2, y = VH / 2 - h / 2, kind = modal.kind, price = CFG.PRICES[kind], coins = save.coins || 0;
     D.panel(c, x, y, w, h);
-    D.text(c, ASSIST_NAME[kind] + '次数已用完', VW / 2, y + 80, 44, '#7A2A1C', { title: true });
-    var ic = { hint: IMG.ic_hint, undo: IMG.ic_heartplus, remove: IMG.ic_remove }[kind];
-    if (ic) c.drawImage(ic, VW / 2 - 60, y + 125, 120, 120);
-    D.text(c, '观看一段视频，获得 ' + ASSIST_NAME[kind] + ' ×1', VW / 2, y + 285, 28, '#6B4A26');
-    mbtn(c, 'ad-ok', VW / 2 - 220, y + 335, 250, 92, '看广告', 'jade', function () {
-      var m = modal;
-      P.showRewarded().then(function (r) {
+    D.text(c, ITEM_NAME[kind] + '已用完', VW / 2, y + 76, 46, '#7A2A1C', { title: true });
+    if (kind === 'hint' && IMG.ic_hint) c.drawImage(IMG.ic_hint, VW / 2 - 56, y + 116, 112, 112);
+    else { Y.jade(c, VW / 2, y + 172, 112); Y.itemGlyph(c, kind, VW / 2, y + 172, 112, now); }
+    D.text(c, ITEM_DESC[kind], VW / 2, y + 262, 26, '#6B4A26');
+    if (IMG.coin) c.drawImage(IMG.coin, VW / 2 - 110, y + 290, 32, 32);
+    D.text(c, '持有金币 ' + coins, VW / 2 + 16, y + 307, 26, '#8A5A10', { title: true });
+    var m = modal;
+    mbtn(c, 'buy-coin', VW / 2 - 230, y + 350, 220, 92, price + ' 金币', coins >= price ? 'red' : 'wood', function () {
+      if ((save.coins || 0) < price) { toast('金币不足，可以看广告免费获得'); return; }
+      save.coins -= price; persist(); modal = null; P.play('unlock', 0.5); m.apply();
+    }, { size: 34, sub: '购买 1 次' });
+    mbtn(c, 'buy-ad', VW / 2 + 10, y + 350, 220, 92, '看广告', 'jade', function () {
+      rewardedAd('item_' + kind).then(function (r) {
         if (r.msg) toast(r.msg);
         modal = null;
-        if (r.ok) { m.apply(); }
+        if (r.ok) m.apply();
       });
-    }, { size: 36 });
-    mbtn(c, 'ad-no', VW / 2 + 50, y + 335, 170, 92, '取消', 'wood', function () { modal = null; if (st) st.removeMode = false; }, { size: 32 });
+    }, { size: 34, sub: '免费 1 次' });
+    mbtn(c, 'buy-no', VW / 2 - 100, y + 466, 200, 70, '取消', 'wood', function () { modal = null; if (st) st.mode = null; }, { size: 28 });
+  },
+  reset: function (c) {
+    var w = 540, h = 380, x = VW / 2 - w / 2, y = VH / 2 - h / 2;
+    D.panel(c, x, y, w, h);
+    D.text(c, '重置本关', VW / 2, y + 80, 50, '#7A2A1C', { title: true });
+    D.text(c, '恢复初始棋盘与倒计时（免费）', VW / 2, y + 150, 28, '#6B4A26');
+    mbtn(c, 'r-yes', VW / 2 - 220, y + 230, 200, 92, '重置', 'red', function () { startLevel(st.n, st.daily, true); toast('已重置'); }, { size: 34 });
+    mbtn(c, 'r-no', VW / 2 + 20, y + 230, 200, 92, '继续', 'wood', closeModal, { size: 34 });
+  },
+  tasks: function (c) {
+    var w = 640, h = 640, x = VW / 2 - w / 2, y = VH / 2 - h / 2, t = tasksToday();
+    D.panel(c, x, y, w, h);
+    D.text(c, '每日任务', VW / 2, y + 76, 54, '#7A2A1C', { title: true });
+    if (IMG.coin) c.drawImage(IMG.coin, VW / 2 - 100, y + 112, 32, 32);
+    D.text(c, '持有金币 ' + (save.coins || 0), VW / 2 + 20, y + 129, 26, '#8A5A10', { title: true });
+    TASKS.forEach(function (tk, i) {
+      var ry = y + 170 + i * 108, prog = Math.min(tk.need, t[tk.id] || 0), done = prog >= tk.need, claimed = !!t.claimed[tk.id];
+      D.rr(c, x + 36, ry, w - 72, 92, 16); c.fillStyle = claimed ? 'rgba(90,74,48,0.18)' : 'rgba(255,248,230,0.7)'; c.fill(); c.lineWidth = 2; c.strokeStyle = '#B4832E'; c.stroke();
+      D.text(c, tk.name, x + 64, ry + 32, 30, '#3A2410', { title: true, align: 'left' });
+      progressBar(c, x + 64, ry + 56, 220, prog / tk.need, 16);
+      D.text(c, prog + '/' + tk.need, x + 312, ry + 64, 22, '#6B4A26', { align: 'left' });
+      if (IMG.coin) c.drawImage(IMG.coin, x + 352, ry + 31, 28, 28);
+      D.text(c, '+' + tk.coins, x + 384, ry + 46, 26, '#8A5A10', { title: true, align: 'left' });
+      var bx = x + w - 164, key = 'tk-' + tk.id;
+      if (claimed) D.text(c, '已领取', bx + 60, ry + 46, 26, '#6E675C', { title: true });
+      else mbtn(c, key, bx, ry + 16, 120, 60, done ? '领取' : '未完成', done ? 'red' : 'wood', function () {
+        if (!done) { toast('完成后再来领取'); return; }
+        t.claimed[tk.id] = 1; addCoins(tk.coins, 'task'); P.play('unlock'); toast('任务完成 +' + tk.coins + ' 金币'); burst(bx + 60, ry + 46, 30, 'gold', 360);
+      }, { size: 24 });
+    });
+    D.text(c, '每天 0 点刷新', VW / 2, y + h - 40, 22, '#8A6A40');
+    closeX(c, x + w - 10, y + 10);
   },
   quit: function (c) {
     var w = 540, h = 380, x = VW / 2 - w / 2, y = VH / 2 - h / 2;
@@ -2320,7 +3251,7 @@ var MODALS = {
     D.text(c, '每日挑战', VW / 2, y + 80, 56, '#7A2A1C', { title: true });
     D.text(c, d, VW / 2, y + 140, 30, '#6B4A26', { title: true });
     if (IMG.ic_daily) c.drawImage(IMG.ic_daily, VW / 2 - 70, y + 170, 140, 140);
-    D.text(c, got ? '今日已完成 ★' + got + '，可以再挑战' : '每天一局高难箭阵 · 首次完成奖励 提示×1', VW / 2, y + 345, 25, '#5A3A1A');
+    D.text(c, got ? '今日已完成 ★' + got + '，可以再挑战' : '每天一局 28×44 机关大阵 · 首次完成 金币×' + CFG.COINS.daily, VW / 2, y + 345, 25, '#5A3A1A');
     mbtn(c, 'd-go', VW / 2 - 180, y + 390, 360, 96, got ? '再次挑战' : '开始挑战', 'red', function () { startLevel(0, d); }, { size: 40 });
     closeX(c, x + w - 10, y + 10);
   },
@@ -2343,7 +3274,7 @@ var MODALS = {
       }, { modal: true });
     });
     mbtn(c, 's-tut', VW / 2 - 170, y + 460, 340, 80, '重温新手教程', 'jade', function () { startLevel(1); }, { size: 30 });
-    D.text(c, '《山海一箭》 v1.0 · 异兽原文出自《山海经》', VW / 2, y + h - 34, 20, '#8A6A40');
+    D.text(c, '《山海一箭》 v4 · 异兽原文出自《山海经》', VW / 2, y + h - 34, 20, '#8A6A40');
     closeX(c, x + w - 10, y + 10);
   },
   checkin: function (c) {
@@ -2363,13 +3294,14 @@ var MODALS = {
       if (today) { g.addColorStop(0, '#FFE9B0'); g.addColorStop(1, '#E8B54E'); } else { g.addColorStop(0, '#F8EED6'); g.addColorStop(1, '#E2CFA4'); }
       c.fillStyle = g; c.fill(); c.lineWidth = today ? 5 : 2.5; c.strokeStyle = today ? '#C8372D' : '#B4832E'; c.stroke();
       D.text(c, '第' + cnNum(i + 1) + '天', cx + cw / 2, cy + 28, 24, '#6B4A26', { title: true });
-      var rw = CFG.CHECKIN[i], keys = Object.keys(rw), icons = { hint: IMG.ic_hint, undo: IMG.ic_heartplus, remove: IMG.ic_remove };
+      var rw = CFG.CHECKIN[i], keys = Object.keys(rw);
+      var drawIt = function (kk, ix, iy, sz) { if (kk === 'hint') { if (IMG.ic_hint) c.drawImage(IMG.ic_hint, ix - sz / 2, iy - sz / 2, sz, sz); } else { Y.jade(c, ix, iy, sz); Y.itemGlyph(c, kk, ix, iy, sz, 0); } };
       if (keys.length === 1) {
-        if (icons[keys[0]]) c.drawImage(icons[keys[0]], cx + cw / 2 - 40, cy + 50, 80, 80);
+        drawIt(keys[0], cx + cw / 2, cy + 90, 80);
         D.text(c, ASSIST_NAME[keys[0]] + '×' + rw[keys[0]], cx + cw / 2, cy + 148, 22, '#3A2410', { weight: '700' });
       } else {
-        keys.forEach(function (kk, j) { if (icons[kk]) c.drawImage(icons[kk], cx + 8 + j * 38, cy + 64 + (j === 1 ? -10 : 0), 42, 42); });
-        D.text(c, '全道具×2', cx + cw / 2, cy + 148, 22, '#3A2410', { weight: '700' });
+        keys.forEach(function (kk, j) { drawIt(kk, cx + 30 + (j % 2) * 70, cy + 66 + Math.floor(j / 2) * 46, 44); });
+        D.text(c, '道具大礼包', cx + cw / 2, cy + 148, 22, '#3A2410', { weight: '700' });
       }
       if (claimed) {
         c.save(); c.globalAlpha = 0.55; D.rr(c, cx, cy, cw, chh, 18); c.fillStyle = '#5A4A30'; c.fill(); c.restore();
@@ -2391,24 +3323,41 @@ var MODALS = {
   }
 };
 
+function progressBar(c, x, y, w, ratio, hh) {
+  hh = hh || 22;
+  D.rr(c, x, y, w, hh, hh / 2); c.fillStyle = 'rgba(70,45,20,0.25)'; c.fill();
+  if (ratio > 0.01) { D.rr(c, x + 2, y + 2, Math.max(hh - 4, (w - 4) * Math.min(1, ratio)), hh - 4, (hh - 4) / 2); var g = c.createLinearGradient(0, y, 0, y + hh); g.addColorStop(0, '#B4E8C8'); g.addColorStop(1, '#3F8A62'); c.fillStyle = g; c.fill(); }
+  D.rr(c, x, y, w, hh, hh / 2); c.lineWidth = 2; c.strokeStyle = '#8A6214'; c.stroke();
+}
 function drawToasts(c) {
   for (var i = 0; i < toasts.length; i++) {
-    var t = toasts[i], a = Math.min(1, t.t * 6, (2.2 - t.t) * 3);
-    c.save(); c.globalAlpha = a;
-    c.font = '600 30px ' + D.FONT_B;
-    var w = c.measureText(t.s).width + 70, y = VH * 0.3 - Math.min(1, t.t * 6) * 20;
-    D.rr(c, VW / 2 - w / 2, y - 34, w, 68, 34); c.fillStyle = 'rgba(40,24,10,0.88)'; c.fill();
+    var t = toasts[i], d = t.d || 2.2, a = Math.min(1, t.t * 6, (d - t.t) * 3);
+    c.save(); c.globalAlpha = Math.max(0, a);
+    var fs = 30; c.font = '600 ' + fs + 'px ' + D.FONT_B;
+    var lines = [t.s];
+    if (c.measureText(t.s).width > 640) {
+      var cut = t.s.indexOf('：') > 0 ? t.s.indexOf('：') + 1 : Math.ceil(t.s.length / 2);
+      lines = [t.s.slice(0, cut), t.s.slice(cut)];
+      fs = 28; c.font = '600 ' + fs + 'px ' + D.FONT_B;
+    }
+    var w = 0; lines.forEach(function (l) { w = Math.max(w, c.measureText(l).width); }); w = Math.min(VW - 20, w + 70);
+    var hh = 34 + lines.length * 38, y = (st && scene === 'play' ? SAFE_T + 84 : VH * 0.3) - Math.min(1, t.t * 6) * 20;
+    D.rr(c, VW / 2 - w / 2, y - hh / 2, w, hh, Math.min(34, hh / 2)); c.fillStyle = 'rgba(40,24,10,0.9)'; c.fill();
     c.lineWidth = 2; c.strokeStyle = '#D4A443'; c.stroke();
-    D.text(c, t.s, VW / 2, y + 1, 30, '#FBEBC4');
+    lines.forEach(function (l, k) { D.text(c, l, VW / 2, y - (lines.length - 1) * 19 + k * 38 + 1, fs, '#FBEBC4'); });
     c.restore();
   }
 }
 
 // ---------------- 测试辅助：自动走一步（浏览器调试用） ----------------
 function autoSolveStep() {
-  if (!st) return false;
-  for (var i = 0; i < st.board.segs.length; i++) if (st.alive[i] && !st.anims[i] && G.isFree(st.board, st.occ, i)) { tapSeg(i); return true; }
-  return false;
+  if (!st || st.won || st.failed) return false;
+  var cand = hintCandidates();
+  if (!cand.length) return false;
+  var c0 = cand[0];
+  if (c0.opt === 'rot') { rotateSeg(c0.i); return true; }
+  tapSeg(c0.i, c0.opt === 'tail' ? 'tail' : (c0.opt === 'head' ? 'head' : null));
+  return true;
 }
 
 module.exports = { start: start };
