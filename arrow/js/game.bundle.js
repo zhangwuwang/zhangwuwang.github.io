@@ -50,8 +50,11 @@ module.exports = {
   INTERSTITIAL_EVERY_WINS: 3,
   // 初始免费道具次数
   FREE_ASSISTS: { hint: 3, undo: 2, remove: 2 },
+  // 每关心数（撞线扣 1 颗）。大棋盘若觉得太严苛可调成 4 或 5，界面会自动适配
   HEARTS: 3,
-  SLIDE_SPEED: 25, // 格/秒
+  // 棋盘最大放大倍数（双指捏合 / 滚轮）
+  MAX_ZOOM: 3,
+  SLIDE_SPEED: 25, // 格/秒（最低速度；长线/远距离会自动加速，保证 0.75 秒内飞出）
   TOTAL_LEVELS: 500,
   // 7 日签到奖励
   CHECKIN: [
@@ -62,11 +65,21 @@ module.exports = {
 };
 
 };
+M["levelpick"]=function(module,exports,require){
+// 自动生成：tools/precompute.js（第 2..500 关选用的候选种子编号）
+module.exports = [0,5,0,6,3,1,3,5,2,5,6,2,5,5,4,2,3,6,4,3,0,3,5,1,5,6,0,2,6,0,7,6,2,0,5,0,0,6,7,5,0,0,2,2,0,6,1,1,3,7,1,0,6,5,4,2,4,0,4,5,1,2,0,1,0,3,0,7,7,7,3,5,1,4,2,2,1,0,0,7,4,2,1,4,4,5,5,3,5,7,1,5,1,0,7,1,6,4,5,0,4,3,5,4,0,1,1,2,5,0,6,6,6,0,4,7,1,7,1,0,3,4,7,5,0,2,0,6,4,3,7,1,7,3,4,2,3,5,7,2,3,0,2,6,5,1,0,4,5,7,4,3,2,2,1,5,2,1,6,3,3,0,4,0,1,5,6,3,5,2,2,4,0,4,7,1,1,5,3,3,3,4,2,1,0,5,1,0,2,1,4,2,0,7,4,0,6,1,6,2,6,5,4,3,5,0,4,4,4,5,0,7,5,2,2,3,0,4,0,3,5,7,4,5,3,1,1,4,0,1,1,2,0,3,3,4,6,4,7,1,4,5,6,0,2,3,4,2,6,1,2,2,1,0,6,7,3,2,7,0,7,2,0,3,3,4,4,7,2,4,0,6,5,2,3,1,5,7,5,0,1,1,0,1,5,6,4,3,1,3,7,4,3,4,4,2,3,3,0,0,0,5,6,4,2,1,2,6,7,0,4,3,4,4,4,1,2,2,2,6,3,0,0,4,1,6,0,6,4,0,1,2,0,0,2,2,2,3,1,4,4,4,7,7,7,7,1,0,5,1,0,7,0,2,3,4,5,3,1,2,0,5,1,1,0,7,6,7,4,5,1,7,4,1,7,6,4,0,3,6,0,7,5,7,2,3,4,3,3,2,4,5,4,5,7,0,6,0,6,0,4,2,7,5,3,4,0,0,2,5,5,3,3,6,0,5,4,2,2,5,3,1,6,1,0,5,4,3,2,0,5,2,4,2,2,1,1,3,4,5,0,6,0,0,7,7,0,1,4,1,4,1,4,7,3,5,0,4,3,1,5,5,1,0,1,2,0,0,6,1,3,2,3,2,4,3,2,6,2,1,4,2,1,0,3,5,0,5,5,0,1,3,7,1,0,5,0,7,7];
+
+};
 M["levelgen"]=function(module,exports,require){
-// 关卡生成 + 求解/评级
-// 棋盘 w x h 个格；每条箭是 2–5 格的折线，cells[0] 为箭尾，cells[len-1] 为箭头。
-// 生成方法：逆向插入。新放入的箭，其“出射线”（箭头沿方向到边界的格子）不得经过任何已放置的格子，
-// 因此按插入的逆序逐个移除一定可解。
+// 关卡生成 + 求解/评级（v2：密集长折线）
+// 棋盘 w x h；每条线是一条折线，cells[0] 为线尾，cells[len-1] 为箭头。
+// 点击后整条线沿箭头方向蛇形滑出；出射线（箭头沿方向到边界的格子）上有别的线就会撞上。
+//
+// 可解性保证：维护“阻挡依赖图”——A 的出射线上有 B 的格子，则 A 依赖 B（B 先走 A 才能走）。
+// 每放入/延长一条线都做增量环检测，图始终是有向无环图（DAG），按拓扑序移除即可清空棋盘。
+// 另外禁止出射线穿过自身（那样永远飞不出去）。
+// 思路参考：IcedSoul/minigame-everyday day-03-arrow 的“增量放置 + 环检测 + 防孤格 + 端点延长补洞”，
+// 此处为独立重写（该仓库未附许可证，未复制其代码）。
 var R = require('./rng');
 
 var DIRS = [[1, 0], [0, 1], [-1, 0], [0, -1]];
@@ -84,85 +97,226 @@ function rayCells(w, h, cells) {
   return out;
 }
 
-function randomWalk(w, h, occ, start, len, rng, turnP) {
-  var path = [start], used = {};
-  used[start[1] * w + start[0]] = 1;
-  var dir = rng.int(0, 3);
-  for (var i = 1; i < len; i++) {
-    var cur = path[path.length - 1];
-    var opts = [];
-    // 继续直行或转弯
-    var tryDirs = rng.next() < turnP ? [(dir + 1) % 4, (dir + 3) % 4, dir] : [dir, (dir + 1) % 4, (dir + 3) % 4];
-    if (rng.next() < 0.5 && tryDirs.length === 3 && tryDirs[0] !== dir) { var t = tryDirs[0]; tryDirs[0] = tryDirs[1]; tryDirs[1] = t; }
-    for (var k = 0; k < tryDirs.length; k++) {
-      var dd = DIRS[tryDirs[k]], nx = cur[0] + dd[0], ny = cur[1] + dd[1];
-      if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
-      var id = ny * w + nx;
-      if (occ[id] >= 0 || used[id]) continue;
-      opts.push([nx, ny, tryDirs[k]]);
-      break;
-    }
-    if (!opts.length) break;
-    var o = opts[0];
-    path.push([o[0], o[1]]); used[o[1] * w + o[0]] = 1; dir = o[2];
-  }
-  return path;
-}
-
+// ---------------- 生成器 ----------------
+// opt: minLen, maxLen, meanLen, turnP, hugP, bias(>0 偏好被挡/向内的线 → 依赖链更深), tries, maxCap
 function generate(w, h, rng, opt) {
-  var N = w * h, occ = new Int16Array(N).fill(-1), segs = [];
-  var target = Math.floor(N * opt.coverage), filled = 0;
-  var cx = (w - 1) / 2, cy = (h - 1) / 2;
-  for (var pass = 0; pass < 3 && filled < target; pass++) {
-    var cells = [];
-    for (var i = 0; i < N; i++) if (occ[i] < 0) {
-      var x = i % w, y = (i / w) | 0;
-      var dist = Math.max(Math.abs(x - cx) / w, Math.abs(y - cy) / h);
-      cells.push([i, dist * opt.centerW + rng.next()]);
+  var N = w * h;
+  var occ = new Int16Array(N).fill(-1);
+  var segs = [], deps = [], rays = [];
+  var cover = []; for (var i = 0; i < N; i++) cover.push([]);   // cover[c]：出射线经过 c 的线
+  var mark = new Int32Array(4096), stamp = 0, stack = [];
+  var tmark = new Int32Array(4096), tstamp = 0;
+  var maxLen = opt.maxLen, cap = opt.maxCap || maxLen + 6;
+
+  function ensure(n) { if (n >= mark.length) { var m = new Int32Array(mark.length * 2); m.set(mark); mark = m; var t = new Int32Array(tmark.length * 2); t.set(tmark); tmark = t; } }
+
+  // 从 starts 出发沿 deps 搜索，是否能到达 targets（tmark 标记）中的任一节点
+  function reaches(starts) {
+    stamp++; stack.length = 0;
+    for (var i = 0; i < starts.length; i++) { var s = starts[i]; if (tmark[s] === tstamp) return true; if (mark[s] !== stamp) { mark[s] = stamp; stack.push(s); } }
+    while (stack.length) {
+      var a = stack.pop(), d = deps[a];
+      for (var j = 0; j < d.length; j++) {
+        var b = d[j];
+        if (tmark[b] === tstamp) return true;
+        if (mark[b] !== stamp) { mark[b] = stamp; stack.push(b); }
+      }
     }
-    cells.sort(function (a, b) { return a[1] - b[1]; });
-    for (var c = 0; c < cells.length && filled < target; c++) {
-      var id = cells[c][0];
-      if (occ[id] >= 0) continue;
-      var start = [id % w, (id / w) | 0], best = null, bestScore = -1e9;
-      for (var t = 0; t < opt.tries; t++) {
-        var len = pickLen(rng, opt, pass);
-        var path = randomWalk(w, h, occ, start, len, rng, opt.turnP);
-        if (path.length < Math.max(2, pass === 2 ? 2 : opt.minLen)) continue;
-        for (var o = 0; o < 2; o++) {
-          var cl = o ? path.slice().reverse() : path;
-          var ray = rayCells(w, h, cl), ok = true;
-          for (var r = 0; r < ray.length; r++) if (occ[ray[r]] >= 0) { ok = false; break; }
-          if (!ok) continue;
-          var sc = ray.length * opt.rayW + cl.length * opt.lenW + rng.next() * 2;
-          if (opt.noEdgeOut && ray.length === 0) sc -= 3;
-          if (sc > bestScore) { bestScore = sc; best = cl; }
+    return false;
+  }
+
+  // 评估一条候选线（cells 为 [id...]，末元素为箭头）。self: 若为延长已有线则传其编号
+  // 返回 {ray, blockers} 或 null
+  var inPath = new Int32Array(N), pstamp = 0;
+  function evaluate(ids, self, addedFrom) {
+    var n = ids.length; if (n < 2) return null;
+    var hd = ids[n - 1], pv = ids[n - 2];
+    var hx = hd % w, hy = (hd / w) | 0, dx = hx - pv % w, dy = hy - ((pv / w) | 0);
+    pstamp++;
+    for (var i = 0; i < n; i++) inPath[ids[i]] = pstamp;
+    var ray = [], blockers = [], x = hx + dx, y = hy + dy;
+    tstamp++;
+    while (x >= 0 && y >= 0 && x < w && y < h) {
+      var c = y * w + x;
+      if (inPath[c] === pstamp) return null;          // 出射线穿过自身
+      ray.push(c);
+      var o = occ[c];
+      if (o >= 0 && o !== self && tmark[o] !== tstamp) { tmark[o] = tstamp; blockers.push(o); }
+      x += dx; y += dy;
+    }
+    // 目标集合：会依赖这条线的线（出射线经过新增格子的）以及它自己
+    tstamp++;
+    var any = false;
+    if (self >= 0) { tmark[self] = tstamp; any = true; }
+    for (var k = addedFrom; k < n; k++) {
+      var cv = cover[ids[k]];
+      for (var m = 0; m < cv.length; m++) { if (cv[m] !== self) { tmark[cv[m]] = tstamp; any = true; } }
+    }
+    if (any && blockers.length && reaches(blockers)) return null;
+    return { ray: ray, blockers: blockers };
+  }
+
+  function commitNew(ids, ev) {
+    var si = segs.length; ensure(si + 2);
+    for (var i = 0; i < ids.length; i++) {
+      var c = ids[i]; occ[c] = si;
+      var cv = cover[c]; for (var m = 0; m < cv.length; m++) deps[cv[m]].push(si);
+    }
+    for (var r = 0; r < ev.ray.length; r++) cover[ev.ray[r]].push(si);
+    segs.push(ids); deps.push(ev.blockers); rays.push(ev.ray);
+    return si;
+  }
+  // 延长已有线 si：newIds 为新的完整格子序列，added 为新增格子
+  function commitExtend(si, newIds, added, ev, headChanged) {
+    if (headChanged) {
+      var old = rays[si];
+      for (var r = 0; r < old.length; r++) { var cv = cover[old[r]], p = cv.indexOf(si); if (p >= 0) cv.splice(p, 1); }
+      for (var r2 = 0; r2 < ev.ray.length; r2++) cover[ev.ray[r2]].push(si);
+      rays[si] = ev.ray; deps[si] = ev.blockers;
+    }
+    for (var i = 0; i < added.length; i++) {
+      var c = added[i]; occ[c] = si;
+      var cl = cover[c]; for (var m = 0; m < cl.length; m++) if (cl[m] !== si) deps[cl[m]].push(si);
+    }
+    segs[si] = newIds;
+  }
+
+  function freeNb(c, extraStamp) {
+    var x = c % w, y = (c / w) | 0, n = 0;
+    if (x > 0 && occ[c - 1] < 0 && inPath[c - 1] !== extraStamp) n++;
+    if (x < w - 1 && occ[c + 1] < 0 && inPath[c + 1] !== extraStamp) n++;
+    if (y > 0 && occ[c - w] < 0 && inPath[c - w] !== extraStamp) n++;
+    if (y < h - 1 && occ[c + w] < 0 && inPath[c + w] !== extraStamp) n++;
+    return n;
+  }
+  function nbs(c) {
+    var x = c % w, y = (c / w) | 0, out = [];
+    if (x < w - 1) out.push([c + 1, 0]);
+    if (y < h - 1) out.push([c + w, 1]);
+    if (x > 0) out.push([c - 1, 2]);
+    if (y > 0) out.push([c - w, 3]);
+    return out;
+  }
+  // 放入 c 是否会让某个空邻格变成孤格
+  function isolates(c, ps) {
+    var nb = nbs(c);
+    for (var i = 0; i < nb.length; i++) {
+      var q = nb[i][0];
+      if (occ[q] >= 0 || inPath[q] === ps) continue;
+      if (freeNb(q, ps) === 0) return true;
+    }
+    return false;
+  }
+
+  function pickLen() {
+    var r = rng.next();
+    if (r < opt.shortP) return rng.int(2, 3);
+    // 偏长分布：均值 meanLen
+    var u = (rng.next() + rng.next() + rng.next()) / 3;
+    return Math.max(opt.minLen, Math.min(maxLen, Math.round(opt.minLen + u * 2 * (opt.meanLen - opt.minLen))));
+  }
+
+  // 随机游走生成一条折线（格子 id 列表）
+  function walk(start, len) {
+    pstamp++; var ps = pstamp;
+    var path = [start]; inPath[start] = ps;
+    var dir = rng.int(0, 3);
+    for (var i = 1; i < len; i++) {
+      var cur = path[path.length - 1], nb = nbs(cur), cand = [];
+      for (var k = 0; k < nb.length; k++) { var q = nb[k][0]; if (occ[q] < 0 && inPath[q] !== ps) cand.push(nb[k]); }
+      if (!cand.length) break;
+      var safe = [];
+      for (var k2 = 0; k2 < cand.length; k2++) { inPath[cand[k2][0]] = ps; if (!isolates(cand[k2][0], ps)) safe.push(cand[k2]); inPath[cand[k2][0]] = 0; }
+      if (safe.length) cand = safe;
+      var ch = null;
+      if (rng.next() < opt.hugP) {
+        // 贴边/贴线走：选空邻格最少的方向（形成回环、螺旋）
+        var best = 9;
+        for (var a = 0; a < cand.length; a++) { var f = freeNb(cand[a][0], ps) + rng.next() * 0.9; if (f < best) { best = f; ch = cand[a]; } }
+      } else {
+        var straight = null, turns = [];
+        for (var b = 0; b < cand.length; b++) { if (cand[b][1] === dir) straight = cand[b]; else turns.push(cand[b]); }
+        if (straight && (rng.next() > opt.turnP || !turns.length)) ch = straight;
+        else if (turns.length) ch = turns[rng.int(0, turns.length - 1)];
+        else ch = straight;
+      }
+      path.push(ch[0]); inPath[ch[0]] = ps; dir = ch[1];
+    }
+    return path;
+  }
+
+  function tryPlace(start, len, minLen) {
+    var best = null, bestSc = -1e9;
+    for (var t = 0; t < opt.tries; t++) {
+      var p = walk(start, t === 0 ? len : (t & 1 ? len : Math.max(minLen, len - 2 - (t >> 1))));
+      if (p.length < minLen) continue;
+      for (var o = 0; o < 2; o++) {
+        var ids = o ? p.slice().reverse() : p;
+        // 不行就从箭头端逐步截短
+        for (var cut = 0; cut <= 2 && ids.length - cut >= minLen; cut++) {
+          var cand = cut ? ids.slice(0, ids.length - cut) : ids;
+          var ev = evaluate(cand, -1, 0);
+          if (!ev) continue;
+          var sc = cand.length * opt.lenW + opt.bias * Math.min(6, ev.blockers.length) + (ev.blockers.length ? 0 : -opt.bias * 0.5) + rng.next() * 1.5;
+          if (sc > bestSc) { bestSc = sc; best = { ids: cand, ev: ev }; }
+          break;
         }
       }
-      if (best) {
-        var si = segs.length;
-        for (var b = 0; b < best.length; b++) occ[best[b][1] * w + best[b][0]] = si;
-        segs.push({ cells: best });
-        filled += best.length;
-        if (opt.maxSegs && segs.length >= opt.maxSegs) { pass = 9; break; }
-      }
     }
+    if (best) { commitNew(best.ids, best.ev); return true; }
+    return false;
   }
-  return { w: w, h: h, segs: segs };
+
+  // 把空格 c 接到相邻线的尾或头上
+  function tryExtend(c) {
+    var nb = rng.shuffle(nbs(c)), opts = [];
+    for (var i = 0; i < nb.length; i++) {
+      var q = nb[i][0], si = occ[q]; if (si < 0) continue;
+      var ids = segs[si]; if (ids.length >= cap) continue;
+      if (ids[0] === q) opts.push([si, 0]);
+      if (ids[ids.length - 1] === q) opts.push([si, 1]);
+    }
+    // 优先延长线尾（出射线不变），且优先较短的线
+    opts.sort(function (a, b) { return (a[1] - b[1]) * 10 + (segs[a[0]].length - segs[b[0]].length) * 0.1; });
+    for (var k = 0; k < opts.length; k++) {
+      var s = opts[k][0], old = segs[s], nids;
+      if (opts[k][1] === 0) { nids = [c].concat(old); var ev = evaluate(nids, s, 0); if (ev) { commitExtend(s, nids, [c], ev, false); return true; } }
+      else { nids = old.concat([c]); var ev2 = evaluate(nids, s, nids.length - 1); if (ev2) { commitExtend(s, nids, [c], ev2, true); return true; } }
+    }
+    return false;
+  }
+
+  // 起点顺序：随机，略偏向四周（四周的线更容易有出口）
+  var order = [];
+  for (var c0 = 0; c0 < N; c0++) {
+    var x0 = c0 % w, y0 = (c0 / w) | 0;
+    var edge = Math.min(x0, y0, w - 1 - x0, h - 1 - y0) / Math.max(1, Math.min(w, h) / 2);
+    order.push([c0, rng.next() + edge * opt.edgeFirst]);
+  }
+  order.sort(function (a, b) { return a[1] - b[1]; });
+  for (var oi = 0; oi < order.length; oi++) {
+    var st = order[oi][0];
+    if (occ[st] >= 0) continue;
+    tryPlace(st, pickLen(), Math.min(opt.minLen, 4));
+  }
+  // 补洞：先延长邻线，再放短线，再延长
+  for (var pass = 0; pass < 3; pass++) {
+    var left = 0;
+    for (var c1 = 0; c1 < N; c1++) if (occ[c1] < 0 && !tryExtend(c1)) left++;
+    if (!left) break;
+    for (var c2 = 0; c2 < N; c2++) if (occ[c2] < 0) tryPlace(c2, rng.int(2, 4), 2);
+  }
+  for (var c3 = 0; c3 < N; c3++) if (occ[c3] < 0) tryExtend(c3);
+
+  var out = [];
+  for (var s2 = 0; s2 < segs.length; s2++) out.push({ cells: segs[s2].map(function (id) { return [id % w, (id / w) | 0]; }) });
+  return { w: w, h: h, segs: out };
 }
 
-function pickLen(rng, opt, pass) {
-  var lo = opt.minLen, hi = opt.maxLen;
-  if (pass === 2) lo = 2;
-  // 偏好中等长度
-  var r = (rng.next() + rng.next()) / 2;
-  return lo + Math.floor(r * (hi - lo + 1));
-}
-
-// 按当前占用判断某箭是否可直接飞出
+// 按当前占用判断某线是否可直接飞出
 function isFree(board, occ, si) {
   var ray = rayCells(board.w, board.h, board.segs[si].cells);
-  for (var r = 0; r < ray.length; r++) if (occ[ray[r]] >= 0) return false;
+  for (var r = 0; r < ray.length; r++) if (occ[ray[r]] >= 0 && occ[ray[r]] !== si) return false;
   return true;
 }
 
@@ -176,26 +330,37 @@ function buildOcc(board, alive) {
   return occ;
 }
 
-// 贪心逐层移除：可解性 + 难度
+// 贪心逐轮移除（每轮移走所有当前可出的线）：可解性 + 难度
 function grade(board) {
-  var n = board.segs.length, alive = [], left = n, layers = 0, frees = [], order = [];
-  for (var i = 0; i < n; i++) alive.push(true);
+  var n = board.segs.length, w = board.w, hh = board.h;
+  var occ = buildOcc(board), rays = [], alive = [], left = n, layers = 0, frees = [], order = [];
+  for (var i = 0; i < n; i++) { rays.push(rayCells(w, hh, board.segs[i].cells)); alive.push(true); }
   while (left > 0) {
-    var occ = buildOcc(board, alive), free = [];
-    for (var s = 0; s < n; s++) if (alive[s] && isFree(board, occ, s)) free.push(s);
+    var free = [];
+    for (var s = 0; s < n; s++) {
+      if (!alive[s]) continue;
+      var ok = true, r = rays[s];
+      for (var k = 0; k < r.length; k++) if (occ[r[k]] >= 0) { ok = false; break; }
+      if (ok) free.push(s);
+    }
     if (!free.length) return { solvable: false, layers: layers, n: n };
-    for (var f = 0; f < free.length; f++) { alive[free[f]] = false; order.push(free[f]); }
+    for (var f = 0; f < free.length; f++) {
+      var si = free[f]; alive[si] = false; order.push(si);
+      var cl = board.segs[si].cells; for (var j = 0; j < cl.length; j++) occ[cl[j][1] * w + cl[j][0]] = -1;
+    }
     left -= free.length; frees.push(free.length); layers++;
   }
-  var cov = 0;
-  for (var k = 0; k < n; k++) cov += board.segs[k].cells.length;
-  cov /= (board.w * board.h);
+  var cov = 0, lens = [], long6 = 0;
+  for (var q = 0; q < n; q++) { var L = board.segs[q].cells.length; cov += L; lens.push(L); if (L >= 6) long6++; }
+  var avgLen = cov / n;
+  cov /= (w * hh);
   var avgFree = n / layers;
-  var D = n * 0.3 + layers * 2.0 + (n / frees[0]) * 0.6;
-  return { solvable: true, layers: layers, n: n, avgFree: avgFree, firstFree: frees[0], coverage: cov, D: D, order: order };
+  var D = layers * 1.0 + (6 - Math.min(6, avgFree)) * 1.5 + n * 0.04;
+  return { solvable: true, layers: layers, n: n, avgFree: avgFree, firstFree: frees[0], coverage: cov, avgLen: avgLen, longFrac: long6 / n, maxLen: Math.max.apply(0, lens), D: D, order: order };
 }
 
-// 给箭上色：相邻箭尽量不同色
+// 上色：相邻线尽量不同色（8 色）
+var NCOLORS = 8;
 function colorize(board, rng) {
   var n = board.segs.length, occ = buildOcc(board), adj = [];
   for (var i = 0; i < n; i++) adj.push({});
@@ -205,9 +370,10 @@ function colorize(board, rng) {
     if (x + 1 < board.w) { var b = occ[y * board.w + x + 1]; if (b >= 0 && b !== a) { adj[a][b] = 1; adj[b][a] = 1; } }
     if (y + 1 < board.h) { var c = occ[(y + 1) * board.w + x]; if (c >= 0 && c !== a) { adj[a][c] = 1; adj[c][a] = 1; } }
   }
+  var base = []; for (var k0 = 0; k0 < NCOLORS; k0++) base.push(k0);
   for (var s = 0; s < n; s++) {
-    var cand = rng.shuffle([0, 1, 2, 3]), best = cand[0], bestBad = 99;
-    for (var k = 0; k < 4; k++) {
+    var cand = rng.shuffle(base.slice()), best = cand[0], bestBad = 99;
+    for (var k = 0; k < NCOLORS; k++) {
       var bad = 0;
       for (var nb in adj[s]) if (board.segs[nb].color === cand[k]) bad++;
       if (bad < bestBad) { bestBad = bad; best = cand[k]; }
@@ -216,51 +382,80 @@ function colorize(board, rng) {
   }
 }
 
-// ---------- 关卡曲线 ----------
+// ---------------- 关卡曲线 ----------------
 function lerp(a, b, t) { return a + (b - a) * Math.max(0, Math.min(1, t)); }
+function ease(t) { t = Math.max(0, Math.min(1, t)); return 1 - (1 - t) * (1 - t); }
+
+// 尺寸：L2 10x14 → L10 16x24 → L30 20x30 → L80+ 22x34
+function sizeFor(n) {
+  if (n <= 10) { var t = (n - 2) / 8; return [Math.round(lerp(10, 16, t)), Math.round(lerp(14, 24, t))]; }
+  if (n <= 30) { var t2 = (n - 10) / 20; return [Math.round(lerp(16, 20, t2)), Math.round(lerp(24, 30, t2))]; }
+  var t3 = (n - 30) / 50; return [Math.round(lerp(20, 22, t3)), Math.round(lerp(30, 34, t3))];
+}
 
 function paramsFor(n) {
-  // 尺寸：L1 3x3 → L20 6x8 → L60 8x10 → L100+ 9x12
-  var w, h;
-  if (n <= 20) {
-    var tbl = [[3,3],[3,4],[4,4],[4,4],[4,5],[4,5],[5,5],[5,5],[5,6],[5,6],[5,6],[5,7],[5,7],[6,7],[6,7],[6,7],[6,8],[6,8],[6,8],[6,8]];
-    w = tbl[n - 1][0]; h = tbl[n - 1][1];
-  } else if (n <= 60) { w = (n < 40 ? 7 : 8); h = n < 30 ? 8 : (n < 45 ? 9 : 10); if (w === 7 && h === 10) h = 9; }
-  else if (n <= 100) { w = n < 80 ? 8 : 9; h = n < 80 ? 10 : 11; }
-  else { w = 9; h = 12; }
-  var boss = (n % 10 === 0) && n > 5;     // 每 10 关为守关关：稍难
+  var sz = sizeFor(n), w = sz[0], h = sz[1];
+  var boss = (n % 10 === 0) && n > 5;     // 每 10 关为守关关：更难
   var rest = (n % 10 === 1) && n > 10;    // 守关后的喘息关
-  var cov = n <= 20 ? lerp(0.55, 0.82, (n - 2) / 18) : lerp(0.84, 0.93, (n - 20) / 200);
-  if (rest) cov -= 0.06;
+  var p = Math.min(1, n / 150);
   var opt = {
-    coverage: Math.min(0.95, cov + (boss ? 0.02 : 0)),
-    minLen: 2, maxLen: n <= 3 ? 3 : (n <= 12 ? 4 : 5),
-    turnP: lerp(0.15, 0.5, n / 120),
-    tries: 40,
-    centerW: lerp(1, 6, n / 80),
-    rayW: lerp(0.0, 0.6, n / 150),
-    lenW: 0.5,
-    noEdgeOut: n > 40
+    minLen: 4, maxLen: Math.round(lerp(14, 24, ease(n / 80))), meanLen: lerp(8, 12, ease(n / 80)),
+    shortP: 0.04, turnP: lerp(0.35, 0.5, p), hugP: lerp(0.3, 0.45, p),
+    bias: lerp(-2, 0.6, ease((n - 2) / 250)) + (boss ? 1.0 : 0) - (rest ? 1.0 : 0),
+    lenW: 0.35, tries: 6, edgeFirst: lerp(1.2, 0.3, ease(n / 80))
   };
   return { w: w, h: h, opt: opt, boss: boss, rest: rest };
 }
 
-// 目标难度：平滑上升曲线 + 守关/喘息的小波动
-function targetD(n, p) {
-  var base = 2 + 26 * (1 - Math.exp(-n / 70)) + n * 0.012;
-  if (p.boss) base *= 1.12;
+// 目标“移除轮数”：平滑但陡峭的上升曲线 + 守关/喘息波动
+function targetRounds(n, p) {
+  var base;
+  if (n <= 10) base = lerp(5, 12, (n - 2) / 8);
+  else if (n <= 30) base = lerp(12, 18, (n - 10) / 20);
+  else base = 18 + 17 * (1 - Math.exp(-(n - 30) / 120));
+  if (p.boss) base *= 1.2;
   if (p.rest) base *= 0.85;
   return base;
 }
+function targetD(n, p) { return targetRounds(n, p); }
+
+// 预计算表：第 n 关选用的候选种子编号（由 tools/precompute.js 生成；运行时只需生成 1 次）
+var PICK = null;
+try { PICK = require('./levelpick'); } catch (e) { PICK = null; }
+
+function candidatesFor(n) { return 8; }
+
+function buildLevel(n, k) {
+  var p = paramsFor(n);
+  var rng = R.makeRng('shanhai-arrow-v2-L' + n + '-' + k);
+  var b = generate(p.w, p.h, rng, p.opt);
+  b.grade = grade(b);
+  return b;
+}
+
+// 在 K 个候选中选最接近目标轮数的（可解是前提；L2 至少 4 轮）
+function searchLevel(n) {
+  var p = paramsFor(n), T = targetRounds(n, p), best = null, bestErr = 1e9, bestK = -1;
+  var K = candidatesFor(n);
+  for (var k = 0; k < K || (!best && k < 40); k++) {
+    var b = buildLevel(n, k), g = b.grade;
+    if (!g.solvable) continue;
+    if (n === 2 && g.layers < 4) continue;
+    var err = Math.abs(g.layers - T) + (1 - g.coverage) * 40;
+    if (err < bestErr) { bestErr = err; best = b; bestK = k; }
+  }
+  best.pick = bestK;
+  return best;
+}
 
 function makeTutorial() {
-  // 手工设计第 1 关：先点右向的红箭，再点被它挡住的玉色箭
+  // 手工设计第 1 关：先点右向的线，再点被它挡住的线
   return {
     w: 3, h: 3,
     segs: [
       { cells: [[0, 0], [1, 0], [2, 0]], color: 0 },           // 第一排 → 直接飞出
-      { cells: [[0, 2], [0, 1], [1, 1]], color: 1 },           // L 形，箭头向右：被玉箭挡住
-      { cells: [[2, 2], [2, 1]], color: 2 }                    // 向上：被第一排红箭挡住
+      { cells: [[0, 2], [0, 1], [1, 1]], color: 1 },           // L 形，箭头向右：被下面那支挡住
+      { cells: [[2, 2], [2, 1]], color: 6 }                    // 向上：被第一排挡住
     ]
   };
 }
@@ -273,19 +468,9 @@ function getLevel(n) {
     board = makeTutorial();
     board.grade = grade(board);
   } else {
-    var p = paramsFor(n), T = targetD(n, p), best = null, bestErr = 1e9;
-    var K = n <= 20 ? 10 : 6;
-    for (var k = 0; k < K || (!best && k < 60); k++) {
-      var rng = R.makeRng('shanhai-arrow-L' + n + '-' + k);
-      var b = generate(p.w, p.h, rng, p.opt);
-      if (b.segs.length < 2) continue;
-      var g = grade(b);
-      if (!g.solvable) continue;
-      if (n >= 4 && g.layers < 2) continue;
-      var err = Math.abs(g.D - T);
-      if (err < bestErr) { bestErr = err; best = b; best.grade = g; }
-    }
-    board = best;
+    var k = PICK && PICK[n - 2] != null ? PICK[n - 2] : -1;
+    if (k >= 0) { board = buildLevel(n, k); board.pick = k; if (!board.grade.solvable) board = searchLevel(n); }
+    else board = searchLevel(n);
     colorize(board, R.makeRng('color-' + n));
   }
   board.id = n;
@@ -294,19 +479,22 @@ function getLevel(n) {
   return board;
 }
 
+function dailyParams() {
+  return { minLen: 5, maxLen: 20, meanLen: 10, shortP: 0.04, turnP: 0.5, hugP: 0.45, bias: 1.2, lenW: 0.35, tries: 6, edgeFirst: 0.3 };
+}
 function getDaily(dateStr) {
   var key = 'daily-' + dateStr;
   if (cache[key]) return cache[key];
-  var rng0 = R.makeRng(key), best = null, bestD = -1;
-  var w = 8, h = 10;
-  for (var k = 0; k < 5; k++) {
-    var rng = R.makeRng(key + '-' + k);
-    var opt = { coverage: 0.9, minLen: 2, maxLen: 5, turnP: 0.45, tries: 40, centerW: 5, rayW: 0.5, lenW: 0.5, noEdgeOut: true };
-    var b = generate(w, h, rng, opt), g = grade(b);
+  var best = null, bestErr = 1e9;
+  // 每日挑战：22x34 大盘，目标约 40 轮（与守关关相当或更难）
+  for (var k = 0; k < 3 || (!best && k < 30); k++) {
+    var rng = R.makeRng(key + '-v2-' + k);
+    var b = generate(22, 34, rng, dailyParams()), g = grade(b);
     if (!g.solvable) continue;
-    if (g.D > bestD) { bestD = g.D; best = b; best.grade = g; }
+    var err = Math.abs(g.layers - 40) + (1 - g.coverage) * 40;
+    if (err < bestErr) { bestErr = err; best = b; best.grade = g; }
   }
-  colorize(best, rng0);
+  colorize(best, R.makeRng(key));
   best.id = 'daily';
   best.daily = dateStr;
   cache[key] = best;
@@ -316,7 +504,8 @@ function getDaily(dateStr) {
 module.exports = {
   DIRS: DIRS, headDir: headDir, rayCells: rayCells, generate: generate, grade: grade,
   isFree: isFree, buildOcc: buildOcc, getLevel: getLevel, getDaily: getDaily, paramsFor: paramsFor,
-  targetD: targetD, TOTAL: 500
+  targetD: targetD, targetRounds: targetRounds, searchLevel: searchLevel, buildLevel: buildLevel,
+  NCOLORS: NCOLORS, TOTAL: 500
 };
 
 };
@@ -419,20 +608,32 @@ P.createOffscreen = function (w, h) {
   return c;
 };
 
-P.onTouch = function (start, move, end) {
+// 多点触控：fn(type, id, x, y)，type 为 down / move / up（取消也按 up 处理）
+P.onPointers = function (fn) {
   if (isWx) {
-    var pt = function (e) { var t = (e.changedTouches && e.changedTouches[0]) || (e.touches && e.touches[0]); return t ? [t.clientX, t.clientY] : [0, 0]; };
-    wx.onTouchStart(function (e) { var p = pt(e); start(p[0], p[1]); });
-    wx.onTouchMove(function (e) { var p = pt(e); move(p[0], p[1]); });
-    wx.onTouchEnd(function (e) { var p = pt(e); end(p[0], p[1]); });
-    wx.onTouchCancel(function (e) { var p = pt(e); end(p[0], p[1]); });
+    var each = function (type) {
+      return function (e) {
+        var ts = e.changedTouches || e.touches || [];
+        for (var i = 0; i < ts.length; i++) { var t = ts[i]; fn(type, t.identifier != null ? t.identifier : i, t.clientX, t.clientY); }
+      };
+    };
+    wx.onTouchStart(each('down'));
+    wx.onTouchMove(each('move'));
+    wx.onTouchEnd(each('up'));
+    wx.onTouchCancel(each('up'));
     return;
   }
-  var down = false;
-  canvas.addEventListener('pointerdown', function (e) { down = true; e.preventDefault(); start(e.clientX, e.clientY); });
-  window.addEventListener('pointermove', function (e) { if (down) move(e.clientX, e.clientY); });
-  window.addEventListener('pointerup', function (e) { if (down) { down = false; end(e.clientX, e.clientY); } });
-  window.addEventListener('pointercancel', function (e) { if (down) { down = false; end(e.clientX, e.clientY); } });
+  var down = {};
+  canvas.addEventListener('pointerdown', function (e) { down[e.pointerId] = 1; e.preventDefault(); fn('down', e.pointerId, e.clientX, e.clientY); });
+  window.addEventListener('pointermove', function (e) { if (down[e.pointerId]) fn('move', e.pointerId, e.clientX, e.clientY); });
+  var up = function (e) { if (down[e.pointerId]) { delete down[e.pointerId]; fn('up', e.pointerId, e.clientX, e.clientY); } };
+  window.addEventListener('pointerup', up);
+  window.addEventListener('pointercancel', up);
+};
+// 鼠标滚轮（仅浏览器）：fn(x, y, deltaY)
+P.onWheel = function (fn) {
+  if (isWx) return;
+  canvas.addEventListener('wheel', function (e) { e.preventDefault(); var d = e.deltaY * (e.deltaMode === 1 ? 33 : 1); fn(e.clientX, e.clientY, d); }, { passive: false });
 };
 
 // ---------- 存储 ----------
@@ -760,12 +961,9 @@ var save, scene = 'loading', modal = null, regions = [], pressedKey = null;
 var now = 0, last = 0, toasts = [], parts = [];
 var loadProgress = 0;
 
-var COLORS = [
-  { base: '#C8372D', dark: '#7E1A13', light: '#F08070', tint: 'rgba(200,55,45,0.16)' },
-  { base: '#6FA98A', dark: '#3A6B53', light: '#B4E0C6', tint: 'rgba(111,169,138,0.2)' },
-  { base: '#2E3A6B', dark: '#161D3E', light: '#6A7CC0', tint: 'rgba(46,58,107,0.15)' },
-  { base: '#D4A443', dark: '#8A6214', light: '#FBE09A', tint: 'rgba(212,164,67,0.22)' }
-];
+// 棋盘线色：国风粉彩，在墨青底上清晰可辨（朱砂、青瓷、碧玉、黛紫、赭石、桃夭、天青、缃黄）
+var COLORS = ['#F28B7D', '#9ED9C3', '#8CCB6E', '#AA9DF2', '#E8A956', '#F4A6C6', '#7FC1F2', '#F2D46A'];
+var BOARD_BG = ['#30394A', '#262D3B'], DOT_COL = 'rgba(150,165,190,0.28)';
 var CN_NUM = ['零', '一', '二', '三', '四', '五', '六', '七', '八', '九', '十'];
 function cnNum(n) {
   if (n <= 10) return CN_NUM[n];
@@ -798,11 +996,12 @@ function start() {
   var s = P.init();
   scr = s; ctx = s.ctx;
   layout();
-  P.onResize(function () { var s2 = P.init(); scr = s2; ctx = s2.ctx; layout(); boardCache = null; });
+  P.onResize(function () { var s2 = P.init(); scr = s2; ctx = s2.ctx; layout(); boardCache = null; lineCache = null; if (st) { computeBoardLayout(); setView(1, 0, 0); } });
   save = loadSave();
   P.setSfx(save.sfx); P.audioInit(); P.setMusic(save.music);
   P.adsInit(); P.setupShare();
-  P.onTouch(onDown, onMove, onUp);
+  P.onPointers(onPtr);
+  P.onWheel(onWheel);
   P.onHide(function () { persist(); });
   P.raf(frame);
   var total = IMAGES.length + BEASTS.length * 2 + 1, done = 0;
@@ -827,7 +1026,7 @@ function start() {
     if (m) { var wait = setInterval(function () { if (scene === 'menu') { clearInterval(wait); if (/unlock/.test(q)) save.maxCleared = Math.max(save.maxCleared, +m[1] - 1); startLevel(+m[1]); } }, 50); }
     var sc = /scene=(\w+)/.exec(q);
     if (sc) { var w2 = setInterval(function () { if (scene === 'menu') { clearInterval(w2); if (/unlock/.test(q)) save.maxCleared = Math.max(save.maxCleared, 60); if (sc[1] === 'codex') openCodex(); else if (sc[1] === 'levels') openLevels(); } }, 50); }
-    if (typeof window !== 'undefined') window.__game = { startLevel: startLevel, state: function () { return st; }, save: function () { return save; }, autoSolve: autoSolveStep, tap: function (i) { tapSeg(i); }, blocked: function () { for (var i = 0; i < st.board.segs.length; i++) if (st.alive[i] && !st.anims[i] && !G.isFree(st.board, st.occ, i)) return i; return -1; }, cellPx: function (x, y) { var p = cellPx(x, y); return [p[0] * S, p[1] * S]; }, openBeast: function (i) { openBeast(BEASTS[i]); }, openSettings: openSettings, openDaily: openDaily, hint: function () { doHint(); }, scene: function () { return scene; }, modal: function () { return modal; }, openCodex: openCodex, openCheckin: openCheckin };
+    if (typeof window !== 'undefined') window.__game = { startLevel: startLevel, state: function () { return st; }, save: function () { return save; }, autoSolve: autoSolveStep, tap: function (i) { tapSeg(i); }, blocked: function () { for (var i = 0; i < st.board.segs.length; i++) if (st.alive[i] && !st.anims[i] && !G.isFree(st.board, st.occ, i)) return i; return -1; }, cellPx: function (x, y) { var p = cellPx(x, y); return [p[0] * S, p[1] * S]; }, openBeast: function (i) { openBeast(BEASTS[i]); }, openSettings: openSettings, openDaily: openDaily, hint: function () { doHint(); }, scene: function () { return scene; }, modal: function () { return modal; }, openCodex: openCodex, openCheckin: openCheckin, view: function () { return { z: VZ.z, px: VZ.px, py: VZ.py, vp: VP }; }, zoomAt: function (z, x, y) { zoomAt(z, x / S, y / S); }, panTo: function (cx, cy) { panToCell(cx, cy); } };
   }
 }
 
@@ -897,19 +1096,67 @@ function cover(c, img) {
 }
 
 // ---------------- 输入 ----------------
+// 多点触控：单指点按 / 拖动（放大后平移棋盘），双指捏合缩放，双击空白处复原；浏览器支持滚轮缩放、鼠标拖动
 var downAt = null, dragging = false, scrollY = 0, scrollV = 0, scrollMax = 0, lastMoveY = 0, lastMoveT = 0;
-function onDown(x, y) {
+var ptrs = {}, nPtr = 0, pinch = null, gestureLock = false, lastEmptyTap = null;
+var TAP_SLOP = 16; // 逻辑像素：超过即视为拖动而非点按
+function onPtr(type, id, x, y) {
   x /= S; y /= S;
+  if (type === 'down') {
+    if (nPtr <= 0) { ptrs = {}; nPtr = 0; }
+    if (!ptrs[id]) nPtr++;
+    ptrs[id] = { x: x, y: y };
+    if (nPtr === 1) { gestureLock = false; pinch = null; onDown(x, y); }
+    else if (nPtr === 2 && downAt && downAt.board && scene === 'play' && !modal) startPinch();
+    else if (downAt) downAt.cancel = true;
+  } else if (type === 'move') {
+    if (!ptrs[id]) return;
+    ptrs[id].x = x; ptrs[id].y = y;
+    if (pinch) updatePinch();
+    else if (nPtr === 1 && !gestureLock) onMove(x, y);
+  } else {
+    if (!ptrs[id]) return;
+    delete ptrs[id]; nPtr = Math.max(0, nPtr - 1);
+    if (pinch) { if (nPtr < 2) { pinch = null; gestureLock = true; downAt = null; dragging = false; pressedKey = null; } }
+    else if (nPtr === 0 && !gestureLock) onUp(x, y);
+    if (nPtr === 0) gestureLock = false;
+  }
+}
+function twoPtrs() { var a = []; for (var k in ptrs) a.push(ptrs[k]); return a.slice(0, 2); }
+function startPinch() {
+  var t = twoPtrs(); if (t.length < 2) return;
+  var mx = (t[0].x + t[1].x) / 2, my = (t[0].y + t[1].y) / 2;
+  pinch = { d0: Math.max(20, Math.hypot(t[0].x - t[1].x, t[0].y - t[1].y)), z0: VZ.z, lx: (mx - VP.x - VZ.px) / VZ.z, ly: (my - VP.y - VZ.py) / VZ.z };
+  if (downAt) downAt.cancel = true;
+  dragging = false; pressedKey = null;
+}
+function updatePinch() {
+  var t = twoPtrs(); if (t.length < 2) return;
+  var mx = (t[0].x + t[1].x) / 2, my = (t[0].y + t[1].y) / 2, d = Math.hypot(t[0].x - t[1].x, t[0].y - t[1].y);
+  var z = clampZ(pinch.z0 * d / pinch.d0);
+  setView(z, mx - VP.x - z * pinch.lx, my - VP.y - z * pinch.ly);
+}
+function onWheel(x, y, d) {
+  x /= S; y /= S;
+  if (scene !== 'play' || modal || !VP || !inVP(x, y)) return;
+  zoomAt(VZ.z * Math.exp(-d * 0.0015), x, y);
+}
+function onDown(x, y) {
   P.unlockAudio();
-  downAt = { x: x, y: y, t: now, sy: scrollY };
+  downAt = { x: x, y: y, t: now, sy: scrollY, px0: VZ.px, py0: VZ.py };
   dragging = false; scrollV = 0; lastMoveY = y; lastMoveT = now;
   var r = hitRegion(x, y);
   pressedKey = r ? r.key : null;
-  if (!r && !modal && scene === 'play') { downAt.board = true; boardTap(x, y); }
+  if (!r && !modal && scene === 'play') downAt.board = true;
 }
 function onMove(x, y) {
-  x /= S; y /= S;
   if (!downAt) return;
+  if (downAt.board) {
+    if (downAt.cancel) return;
+    if (!dragging && Math.hypot(x - downAt.x, y - downAt.y) > TAP_SLOP) dragging = true;
+    if (dragging && VZ.z > 1.001) setView(VZ.z, downAt.px0 + (x - downAt.x), downAt.py0 + (y - downAt.y));
+    return;
+  }
   if ((scene === 'levels' || scene === 'codex') && !modal) {
     if (!dragging && Math.abs(y - downAt.y) > 12) { dragging = true; pressedKey = null; }
     if (dragging) {
@@ -919,16 +1166,15 @@ function onMove(x, y) {
       lastMoveY = y; lastMoveT = now;
       clampScroll(true);
     }
-  }
+  } else if (pressedKey && Math.hypot(x - downAt.x, y - downAt.y) > 40) pressedKey = null;
 }
 function onUp(x, y) {
-  x /= S; y /= S;
   var wasDrag = dragging; dragging = false;
   if (!downAt) return;
-  var board = downAt.board; downAt = null;
-  if (wasDrag) { clampScroll(); pressedKey = null; return; }
+  var board = downAt.board, cancel = downAt.cancel; downAt = null;
+  if (wasDrag) { if (!board) clampScroll(); pressedKey = null; return; }
   scrollV = 0;
-  if (board) return;
+  if (board) { if (!cancel) boardTap(x, y); return; }
   var r = hitRegion(x, y);
   var pk = pressedKey; pressedKey = null;
   if (r && r.key === pk) { P.play('tap', 0.6); r.cb(); }
@@ -1160,24 +1406,47 @@ function startLevel(n, daily) {
     n: n, daily: daily || null, board: board, alive: board.segs.map(function () { return true; }),
     occ: null, hearts: CFG.HEARTS, anims: {}, combo: 0, lastRemove: -9, qishi: 0, hint: -1, hintT: 0,
     misses: 0, undoUsed: false, revived: false, removeMode: false, won: false, winT: 0, failed: false, removedCount: 0,
-    tut: n === 1 && !daily ? 0 : -1, flash: {}, shakeT: 0, heartAnim: [], startT: now
+    tut: n === 1 && !daily ? 0 : -1, flash: {}, shakeT: 0, heartAnim: [], startT: now, ver: 0, tapHL: null
   };
   st.occ = G.buildOcc(board, st.alive);
   modal = null; scene = 'play'; boardCache = null; parts = [];
-  computeBoardLayout();
-  if (!daily && n === 2) toast('撞到其他箭会失去 1 颗心');
+  computeBoardLayout(); setView(1, 0, 0); lineCache = null;
+  if (!daily && n === 2) toast('撞到其他线会失去 1 颗心');
+  else if (!daily && n === 3) toast('双指捏合可放大棋盘，双击空白处复原');
 }
 var BL = null; // 棋盘布局
+var VP = null; // 棋盘格子区（逻辑坐标）
+var VZ = { z: 1, px: 0, py: 0 }; // 缩放与平移（相对 VP 左上角）
 function computeBoardLayout() {
-  var b = st.board, pad = 30;
+  var b = st.board, pad = b.w >= 14 ? 22 : 30;
   var top = SAFE_T + 14 + 104 + 64, bottom = VH - SAFE_B - 210;
   var availW = LW - 40 - pad * 2, availH = bottom - top - pad * 2;
   var cell = Math.min(availW / b.w, availH / b.h, 120);
   var bw = cell * b.w + pad * 2, bh = cell * b.h + pad * 2;
   BL = { cell: cell, pad: pad, x: X0 + (LW - bw) / 2, y: top + (bottom - top - bh) / 2, w: bw, h: bh };
   BL.ox = BL.x + pad; BL.oy = BL.y + pad;
+  VP = { x: BL.ox, y: BL.oy, w: cell * b.w, h: cell * b.h };
 }
-function cellPx(cx, cy) { return [BL.ox + (cx + 0.5) * BL.cell, BL.oy + (cy + 0.5) * BL.cell]; }
+function clampZ(z) { return Math.max(1, Math.min(CFG.MAX_ZOOM || 3, z)); }
+function setView(z, px, py) {
+  z = clampZ(z);
+  if (!VP) { VZ = { z: z, px: 0, py: 0 }; return; }
+  px = Math.max(VP.w - z * VP.w, Math.min(0, px)); py = Math.max(VP.h - z * VP.h, Math.min(0, py));
+  if (z < 1.001) { z = 1; px = 0; py = 0; }
+  VZ.z = z; VZ.px = px; VZ.py = py;
+}
+function zoomAt(z, sx, sy) {
+  var lx = (sx - VP.x - VZ.px) / VZ.z, ly = (sy - VP.y - VZ.py) / VZ.z;
+  z = clampZ(z);
+  setView(z, sx - VP.x - z * lx, sy - VP.y - z * ly);
+}
+function panToCell(cx, cy) { // 放大时把某格移到视野中央
+  if (VZ.z <= 1.001) return;
+  setView(VZ.z, VP.w / 2 - VZ.z * (cx + 0.5) * BL.cell, VP.h / 2 - VZ.z * (cy + 0.5) * BL.cell);
+}
+function inVP(x, y) { return VP && x >= VP.x && y >= VP.y && x <= VP.x + VP.w && y <= VP.y + VP.h; }
+// 格坐标 → 屏幕逻辑坐标（含缩放平移）
+function cellPx(cx, cy) { var k = BL.cell * VZ.z; return [VP.x + VZ.px + (cx + 0.5) * k, VP.y + VZ.py + (cy + 0.5) * k]; }
 
 function buildBoardCache() {
   var k = scr.dpr * S, M = 14;
@@ -1200,31 +1469,26 @@ function buildBoardCache() {
     c.stroke();
   }
   c.restore();
-  // 金线
-  D.rr(c, 5, 5, w - 10, h - 10, 22); c.lineWidth = 3; c.strokeStyle = '#E2B65C'; c.stroke();
-  D.rr(c, pad - 9, pad - 9, w - 2 * pad + 18, h - 2 * pad + 18, 12); c.lineWidth = 4; c.strokeStyle = '#D4A443'; c.stroke();
-  D.rr(c, pad - 4, pad - 4, w - 2 * pad + 8, h - 2 * pad + 8, 9); c.lineWidth = 2; c.strokeStyle = '#3A1E0A'; c.stroke();
-  // 宣纸格
-  var ig = c.createLinearGradient(0, pad, 0, h - pad); ig.addColorStop(0, '#FAF0D8'); ig.addColorStop(1, '#EEDDB6');
-  c.fillStyle = ig; D.rr(c, pad - 2, pad - 2, w - 2 * pad + 4, h - 2 * pad + 4, 8); c.fill();
-  // 内阴影
-  c.save(); D.rr(c, pad - 2, pad - 2, w - 2 * pad + 4, h - 2 * pad + 4, 8); c.clip();
-  var sh = c.createLinearGradient(0, pad, 0, pad + 26); sh.addColorStop(0, 'rgba(90,50,10,0.25)'); sh.addColorStop(1, 'rgba(90,50,10,0)');
-  c.fillStyle = sh; c.fillRect(pad, pad - 2, w, 26);
-  c.restore();
-  c.strokeStyle = 'rgba(140,100,50,0.16)'; c.lineWidth = 1.5;
-  for (var x = 1; x < b.w; x++) { c.beginPath(); c.moveTo(pad + x * cell, pad); c.lineTo(pad + x * cell, h - pad); c.stroke(); }
-  for (var y = 1; y < b.h; y++) { c.beginPath(); c.moveTo(pad, pad + y * cell); c.lineTo(w - pad, pad + y * cell); c.stroke(); }
-  c.fillStyle = 'rgba(140,100,50,0.4)';
-  for (var x2 = 1; x2 < b.w; x2++) for (var y2 = 1; y2 < b.h; y2++) { c.beginPath(); c.arc(pad + x2 * cell, pad + y2 * cell, Math.max(2, cell * 0.035), 0, Math.PI * 2); c.fill(); }
-  // 角花
+  // 角花（画在内盘之下，避免遮住格子）
   if (IMG.corner) {
-    var cs = Math.min(170, Math.max(110, Math.min(w, h) * 0.26)), im = IMG.corner;
+    var cs = Math.min(150, Math.max(90, Math.min(w, h) * 0.2)), im = IMG.corner;
     var cw = cs, chh = cs * im.height / im.width;
     [[0, 0, 1, 1], [w, 0, -1, 1], [0, h, 1, -1], [w, h, -1, -1]].forEach(function (q) {
       c.save(); c.translate(q[0], q[1]); c.scale(q[2], q[3]); c.drawImage(im, -12, -12, cw, chh); c.restore();
     });
   }
+  // 金线
+  D.rr(c, 5, 5, w - 10, h - 10, 22); c.lineWidth = 3; c.strokeStyle = '#E2B65C'; c.stroke();
+  D.rr(c, pad - 9, pad - 9, w - 2 * pad + 18, h - 2 * pad + 18, 12); c.lineWidth = 4; c.strokeStyle = '#D4A443'; c.stroke();
+  D.rr(c, pad - 4, pad - 4, w - 2 * pad + 8, h - 2 * pad + 8, 9); c.lineWidth = 2; c.strokeStyle = '#1A1208'; c.stroke();
+  // 墨青石板底
+  var ig = c.createLinearGradient(0, pad, 0, h - pad); ig.addColorStop(0, BOARD_BG[0]); ig.addColorStop(1, BOARD_BG[1]);
+  c.fillStyle = ig; D.rr(c, pad - 2, pad - 2, w - 2 * pad + 4, h - 2 * pad + 4, 8); c.fill();
+  // 内阴影
+  c.save(); D.rr(c, pad - 2, pad - 2, w - 2 * pad + 4, h - 2 * pad + 4, 8); c.clip();
+  var sh = c.createLinearGradient(0, pad, 0, pad + 22); sh.addColorStop(0, 'rgba(0,0,0,0.35)'); sh.addColorStop(1, 'rgba(0,0,0,0)');
+  c.fillStyle = sh; c.fillRect(pad, pad - 2, w, 22);
+  c.restore();
   boardCache = { cv: cv, k: k, m: M };
 }
 
@@ -1248,24 +1512,31 @@ function segPoly(seg, s) {
 
 function boardTap(x, y) {
   if (!st || st.won || st.failed || !BL) return;
-  var cx = (x - BL.ox) / BL.cell - 0.5, cy = (y - BL.oy) / BL.cell - 0.5;
-  if (cx < -1 || cy < -1 || cx > st.board.w || cy > st.board.h) { if (st.removeMode) { st.removeMode = false; toast('已取消去除'); } return; }
-  var best = -1, bd = 0.62;
-  for (var i = 0; i < st.board.segs.length; i++) {
-    if (!st.alive[i] || st.anims[i]) continue;
-    var cl = st.board.segs[i].cells;
-    for (var k = 0; k < cl.length; k++) {
-      var a = cl[k], b = cl[Math.min(k + 1, cl.length - 1)];
-      var dd = distSeg(cx, cy, a[0], a[1], b[0], b[1]);
-      if (dd < bd) { bd = dd; best = i; }
+  var k = BL.cell * VZ.z;
+  var cx = (x - VP.x - VZ.px) / k - 0.5, cy = (y - VP.y - VZ.py) / k - 0.5;
+  var best = -1, bd = 0.5; // 点击点 0.5 格以内最近的线
+  if (inVP(x, y)) {
+    for (var i = 0; i < st.board.segs.length; i++) {
+      if (!st.alive[i] || st.anims[i]) continue;
+      var cl = st.board.segs[i].cells, d0 = G.headDir(cl), L = cl.length;
+      for (var j = 0; j < L; j++) {
+        var a = cl[j], b = j + 1 < L ? cl[j + 1] : [a[0] + d0[0] * 0.4, a[1] + d0[1] * 0.4];
+        var dd = distSeg(cx, cy, a[0], a[1], b[0], b[1]);
+        if (dd < bd) { bd = dd; best = i; }
+      }
     }
   }
-  if (best < 0) { if (st.removeMode) { st.removeMode = false; toast('已取消去除'); } return; }
-  if (st.removeMode) { st.removeMode = false; useAssist('remove', function () { removeSeg(best, true); }); return; }
-  if (st.tut >= 0) {
-    var want = tutTarget();
-    if (want >= 0 && best !== want && G.isFree(st.board, st.occ, best)) { /* 允许 */ }
+  if (best < 0) {
+    if (st.removeMode) { st.removeMode = false; toast('已取消去除'); return; }
+    // 双击空白处：放大 ↔ 复原
+    if (lastEmptyTap && now - lastEmptyTap.t < 0.38 && Math.hypot(x - lastEmptyTap.x, y - lastEmptyTap.y) < 50) {
+      if (VZ.z > 1.05) setView(1, 0, 0); else zoomAt(2.2, x, y);
+      lastEmptyTap = null;
+    } else lastEmptyTap = { t: now, x: x, y: y };
+    return;
   }
+  lastEmptyTap = null;
+  if (st.removeMode) { st.removeMode = false; useAssist('remove', function () { removeSeg(best, true); }); return; }
   tapSeg(best);
 }
 function distSeg(px, py, ax, ay, bx, by) {
@@ -1279,23 +1550,25 @@ function tapSeg(i) {
   var blockAt = -1;
   for (var r = 0; r < ray.length; r++) if (st.occ[ray[r]] >= 0) { blockAt = r; break; }
   if (st.hint === i) st.hint = -1;
+  st.tapHL = { i: i, t: 0.35 };
   if (blockAt < 0) { removeSeg(i, false); return; }
   // 撞击
-  var blocker = st.occ[ray[blockAt]];
-  st.anims[i] = { type: 'bump', t: 0, k: blockAt + 0.28, blocker: blocker, hit: false };
+  var blocker = st.occ[ray[blockAt]], bk = blockAt + 0.28;
+  st.anims[i] = { type: 'bump', t: 0, k: bk, v: Math.max(CFG.SLIDE_SPEED, bk / 0.4), blocker: blocker, hit: false };
 }
 
 function removeSeg(i, byAssist) {
   var seg = st.board.segs[i], L = seg.cells.length;
   var ray = G.rayCells(st.board.w, st.board.h, seg.cells);
-  st.alive[i] = false; st.occ = G.buildOcc(st.board, st.alive);
+  st.alive[i] = false; st.occ = G.buildOcc(st.board, st.alive); st.ver++;
   st.removedCount++;
   if (byAssist) {
     st.anims[i] = { type: 'dissolve', t: 0 };
     P.play('remove');
     seg.cells.forEach(function (cc) { var p = cellPx(cc[0], cc[1]); burst(p[0], p[1], 10, 'ink'); burst(p[0], p[1], 6, 'gold'); });
   } else {
-    st.anims[i] = { type: 'exit', t: 0, dist: ray.length + L + 4 };
+    var dist = ray.length + L + 2;
+    st.anims[i] = { type: 'exit', t: 0, dist: dist, v: Math.max(CFG.SLIDE_SPEED, dist / 0.75) };
     if (now - st.lastRemove < 1.6) st.combo++; else st.combo = 1;
     st.lastRemove = now;
     P.play('pluck' + Math.min(7, st.combo - 1));
@@ -1317,17 +1590,18 @@ function updatePlay(dt) {
   if (st.shakeT > 0) st.shakeT -= dt;
   for (var k in st.flash) { st.flash[k] -= dt; if (st.flash[k] <= 0) delete st.flash[k]; }
   for (var h = st.heartAnim.length - 1; h >= 0; h--) { st.heartAnim[h].t += dt; if (st.heartAnim[h].t > 0.8) st.heartAnim.splice(h, 1); }
-  var V = CFG.SLIDE_SPEED;
+  if (st.tapHL) { st.tapHL.t -= dt; if (st.tapHL.t <= 0) st.tapHL = null; }
   for (var key in st.anims) {
     var a = st.anims[key], i = +key, seg = st.board.segs[i];
     a.t += dt;
+    var V = a.v || CFG.SLIDE_SPEED;
     if (a.type === 'exit') {
       var acc = 0.07;
       a.s = a.t < acc ? V * a.t * a.t / (2 * acc) : V * (a.t - acc / 2);
       // 金色墨迹拖尾
       var hp = segPoint(seg, a.s + seg.cells.length - 1), px = cellPx(hp[0], hp[1]);
-      var n = 2 + Math.min(4, st.combo);
-      for (var q = 0; q < n; q++) spawn(px[0] + (Math.random() - 0.5) * BL.cell * 0.3, px[1] + (Math.random() - 0.5) * BL.cell * 0.3, 'gold');
+      var n = 1 + Math.min(3, st.combo);
+      if (inVP(px[0], px[1])) for (var q = 0; q < n; q++) spawn(px[0] + (Math.random() - 0.5) * BL.cell * 0.3, px[1] + (Math.random() - 0.5) * BL.cell * 0.3, 'gold', 40);
       if (a.s >= a.dist) delete st.anims[key];
     } else if (a.type === 'bump') {
       var tf = a.k / V;
@@ -1420,6 +1694,7 @@ function doHint() {
       if (sc > bestScore) { bestScore = sc; bestI = f; }
     });
     st.hint = bestI; st.hintT = 8;
+    var hc = st.board.segs[bestI].cells; panToCell(hc[hc.length - 1][0], hc[hc.length - 1][1]);
   });
 }
 function doUndo() {
@@ -1500,6 +1775,7 @@ function drawPlay(c) {
   c.drawImage(boardCache.cv, BL.x - boardCache.m, BL.y - boardCache.m, boardCache.cv.width / boardCache.k, boardCache.cv.height / boardCache.k);
   drawSegments(c);
   c.restore();
+  drawZoomChip(c);
   drawParts(c);
   drawHUD(c);
   drawAssistBar(c);
@@ -1516,6 +1792,22 @@ function drawPlay(c) {
   else if (st.won && st.winT > 0.2) drawWinBeast(c);
 }
 
+function drawZoomChip(c) {
+  if (!st || st.board.w < 12 || st.won) return;
+  var zoomed = VZ.z > 1.05, w = 128, h = 40, x = BL.x + BL.w - w - 20, y = BL.y + BL.h + 2; // 放在棋盘框下方，不遮格子
+  var pr = isPressed('zoom') ? 0.94 : 1;
+  c.save(); c.translate(x + w / 2, y + h / 2); c.scale(pr, pr); c.translate(-x - w / 2, -y - h / 2);
+  D.rr(c, x, y, w, h, h / 2); c.fillStyle = zoomed ? 'rgba(126,26,19,0.92)' : 'rgba(58,32,12,0.9)'; c.fill();
+  c.lineWidth = 2.5; c.strokeStyle = '#D4A443'; c.stroke();
+  if (IMG.ic_zoom) c.drawImage(IMG.ic_zoom, x + 8, y + 4, 32, 32);
+  D.text(c, zoomed ? '复原' : '放大', x + 82, y + h / 2 + 1, 24, '#FBE6B0', { title: true });
+  c.restore();
+  region('zoom', x, y, w, h, function () {
+    if (VZ.z > 1.05) setView(1, 0, 0);
+    else zoomAt(2.2, VP.x + VP.w / 2, VP.y + VP.h / 2);
+  });
+}
+
 function drawWinBeast(c) {
   var b = beastOfChapter(chapterOf(st.daily ? currentLevel() : st.n)), im = BIMG[b.id];
   if (!im || modal) return;
@@ -1530,74 +1822,99 @@ function drawWinBeast(c) {
   c.restore();
 }
 
-function drawSegments(c) {
-  var b = st.board, cell = BL.cell;
-  // 底色圆
-  for (var y = 0; y < b.h; y++) for (var x = 0; x < b.w; x++) {
-    var o = st.occ[y * b.w + x], p = cellPx(x, y);
-    if (o >= 0 && !st.anims[o]) { c.fillStyle = COLORS[b.segs[o].color].tint; c.beginPath(); c.arc(p[0], p[1], cell * 0.4, 0, Math.PI * 2); c.fill(); }
-    else { c.fillStyle = 'rgba(176,128,48,0.45)'; c.beginPath(); c.arc(p[0], p[1], Math.max(2.5, cell * 0.05), 0, Math.PI * 2); c.fill(); }
+// 静态线缓存：未在动画/高亮中的线画进离屏画布，按 (缩放, 平移, 局面版本, 动态集合) 失效；每帧只重画动态的线
+var lineCache = null;
+function dynamicSet() {
+  var d = {};
+  for (var k in st.anims) d[k] = 1;
+  for (var f in st.flash) d[f] = 1;
+  if (st.hint >= 0) d[st.hint] = 1;
+  if (st.tapHL) d[st.tapHL.i] = 1;
+  var tt = tutTarget(); if (tt >= 0) d[tt] = 1;
+  return d;
+}
+function ensureLineCache(dyn) {
+  var key = VZ.z.toFixed(4) + '|' + VZ.px.toFixed(2) + '|' + VZ.py.toFixed(2) + '|' + st.ver + '|' + Object.keys(dyn).join(',') + '|' + st.board.id + st.board.daily;
+  var k = scr.dpr * S, W = Math.ceil(VP.w * k), H = Math.ceil(VP.h * k);
+  if (!lineCache || lineCache.W !== W || lineCache.H !== H) lineCache = { cv: P.createOffscreen(W, H), W: W, H: H, key: null };
+  if (lineCache.key === key) return;
+  lineCache.key = key;
+  var c = lineCache.cv.getContext('2d');
+  c.setTransform(1, 0, 0, 1, 0, 0); c.clearRect(0, 0, W, H);
+  c.setTransform(k, 0, 0, k, -VP.x * k, -VP.y * k);
+  drawCells(c, dyn, false);
+}
+function drawCells(c, dyn, onlyDyn) {
+  var b = st.board, cs = BL.cell * VZ.z;
+  if (!onlyDyn) {
+    // 空格的小墨点
+    c.fillStyle = DOT_COL;
+    var r = Math.max(1.2, cs * 0.06);
+    for (var y = 0; y < b.h; y++) for (var x = 0; x < b.w; x++) {
+      if (st.occ[y * b.w + x] >= 0) continue;
+      var p = cellPx(x, y);
+      if (p[0] < VP.x - cs || p[1] < VP.y - cs || p[0] > VP.x + VP.w + cs || p[1] > VP.y + VP.h + cs) continue;
+      c.beginPath(); c.arc(p[0], p[1], r, 0, Math.PI * 2); c.fill();
+    }
   }
-  // 提示光晕
   for (var i = 0; i < b.segs.length; i++) {
     var a = st.anims[i];
     if (!st.alive[i] && !a) continue;
-    var s = a && a.s ? a.s : 0, alpha = 1;
-    if (a && a.type === 'exit') { alpha = Math.max(0, Math.min(1, (a.dist - s) / 3)); }
-    if (a && a.type === 'dissolve') { alpha = 1 - a.t / 0.5; }
-    var glow = (st.hint === i) ? 0.5 + 0.5 * Math.sin(now * 7) : (st.removeMode && st.alive[i] ? 0.35 + 0.25 * Math.sin(now * 6) : 0);
-    drawArrow(c, b.segs[i], s, alpha, st.flash[i] ? st.flash[i] : 0, glow, a && a.type === 'dissolve' ? 1 + a.t : 1);
+    if (!!dyn[i] !== !!onlyDyn) continue;
+    var s = a && a.s ? a.s : 0, alpha = 1, scale = 1;
+    if (a && a.type === 'exit') alpha = Math.max(0, Math.min(1, (a.dist - s) / 2));
+    if (a && a.type === 'dissolve') { alpha = 1 - a.t / 0.5; scale = 1 + a.t * 0.6; }
+    var glow = 0, glowCol = null;
+    if (st.hint === i) { glow = 0.55 + 0.45 * Math.sin(now * 7); glowCol = '255,215,90'; }
+    else if (st.removeMode && st.alive[i]) { glow = 0.3 + 0.25 * Math.sin(now * 6); glowCol = '255,215,90'; }
+    if (st.tapHL && st.tapHL.i === i) { glow = Math.max(glow, st.tapHL.t / 0.35); glowCol = '255,255,255'; }
+    drawArrow(c, b.segs[i], s, alpha, st.flash[i] || 0, glow, glowCol, scale);
   }
 }
+function drawSegments(c) {
+  var dyn = st.removeMode ? null : dynamicSet();
+  c.save();
+  c.beginPath(); c.rect(VP.x - 1, VP.y - 1, VP.w + 2, VP.h + 2); c.clip();
+  if (dyn) {
+    ensureLineCache(dyn);
+    c.drawImage(lineCache.cv, VP.x, VP.y, VP.w, VP.h);
+    drawCells(c, dyn, true);
+  } else {
+    drawCells(c, {}, false); // 去除模式：全部线都在闪，直接逐帧画
+  }
+  c.restore();
+}
 
-function drawArrow(c, seg, s, alpha, flash, glow, scale) {
-  var cell = BL.cell, col = COLORS[seg.color], pts = segPoly(seg, s).map(function (p) { return cellPx(p[0], p[1]); });
-  var w = cell * 0.34, L = pts.length;
-  var hp = pts[L - 1], pp = pts[L - 2], dx = hp[0] - pp[0], dy = hp[1] - pp[1], dl = Math.sqrt(dx * dx + dy * dy) || 1;
-  if (dl < 0.01 * cell && L > 2) { pp = pts[L - 3]; dx = hp[0] - pp[0]; dy = hp[1] - pp[1]; dl = Math.sqrt(dx * dx + dy * dy) || 1; }
-  dx /= dl; dy /= dl;
-  var d0 = G.headDir(seg.cells); if (s > 0.001 || dl < 1) { /* 头部方向固定为出射方向 */ }
-  if (s > 0) { dx = d0[0]; dy = d0[1]; }
+// 细线 + 圆角折点 + 小而利落的箭头
+function drawArrow(c, seg, s, alpha, flash, glow, glowCol, scale) {
+  var cell = BL.cell * VZ.z, col = COLORS[seg.color % COLORS.length];
+  var pts = segPoly(seg, s).map(function (p) { return cellPx(p[0], p[1]); }), L = pts.length;
+  var d0 = G.headDir(seg.cells), dx = d0[0], dy = d0[1];
+  var hp = pts[L - 1], w = Math.max(1.6, cell * 0.27);
   c.save(); c.globalAlpha = alpha;
   if (scale !== 1) { var m = pts[Math.floor(L / 2)]; c.translate(m[0], m[1]); c.scale(scale, scale); c.translate(-m[0], -m[1]); }
   c.lineCap = 'round'; c.lineJoin = 'round';
-  function path(ox, oy, shorten) {
-    c.beginPath(); c.moveTo(pts[0][0] + ox, pts[0][1] + oy);
-    for (var i = 1; i < L - 1; i++) c.lineTo(pts[i][0] + ox, pts[i][1] + oy);
-    c.lineTo(hp[0] - dx * shorten + ox, hp[1] - dy * shorten + oy);
+  function path() {
+    c.beginPath(); c.moveTo(pts[0][0], pts[0][1]);
+    for (var i = 1; i < L; i++) c.lineTo(pts[i][0], pts[i][1]);
   }
-  var tip = [hp[0] + dx * cell * 0.36, hp[1] + dy * cell * 0.36], nx = -dy, ny = dx, hw = cell * 0.3, back = cell * 0.12;
-  function head(ox, oy, grow) {
-    var bx = hp[0] - dx * back + ox, by = hp[1] - dy * back + oy, g = grow || 0;
+  var tipL = cell * 0.4, hw = cell * 0.25, back = cell * 0.04, nx = -dy, ny = dx;
+  function head(g) {
+    var bx = hp[0] - dx * back, by = hp[1] - dy * back;
     c.beginPath();
-    c.moveTo(tip[0] + dx * g + ox, tip[1] + dy * g + oy);
-    c.lineTo(bx + nx * (hw + g), by + ny * (hw + g));
-    c.quadraticCurveTo(hp[0] + dx * cell * 0.02 + ox, hp[1] + dy * cell * 0.02 + oy, bx - nx * (hw + g), by - ny * (hw + g));
+    c.moveTo(hp[0] + dx * (tipL + g), hp[1] + dy * (tipL + g));
+    c.lineTo(bx + nx * (hw + g) - dx * g, by + ny * (hw + g) - dy * g);
+    c.lineTo(bx - nx * (hw + g) - dx * g, by - ny * (hw + g) - dy * g);
     c.closePath();
   }
   if (glow > 0) {
-    c.strokeStyle = 'rgba(255,215,90,' + (0.55 * glow) + ')'; c.lineWidth = w + cell * 0.32; path(0, 0, 0); c.stroke();
-    c.fillStyle = 'rgba(255,215,90,' + (0.55 * glow) + ')'; head(0, 0, cell * 0.12); c.fill();
+    c.strokeStyle = 'rgba(' + glowCol + ',' + (0.5 * glow) + ')'; c.lineWidth = w + cell * 0.36; path(); c.stroke();
+    c.fillStyle = 'rgba(' + glowCol + ',' + (0.5 * glow) + ')'; head(cell * 0.16); c.fill();
   }
-  // 阴影
-  c.strokeStyle = 'rgba(60,30,8,0.28)'; c.lineWidth = w + 4; path(cell * 0.05, cell * 0.08, 0); c.stroke();
-  c.fillStyle = 'rgba(60,30,8,0.28)'; head(cell * 0.05, cell * 0.08, 2); c.fill();
-  var base = col.base, dark = col.dark, light = col.light;
-  if (flash > 0) { var f = Math.sin(flash * 30) > 0; if (f) { base = '#F04A3A'; dark = '#8E0F08'; light = '#FFB0A0'; } }
-  // 描边
-  c.strokeStyle = dark; c.lineWidth = w + 5; path(0, 0, 0); c.stroke();
-  c.fillStyle = dark; head(0, 0, 2.5); c.fill();
-  // 主体
-  c.strokeStyle = base; c.lineWidth = w; path(0, 0, 0); c.stroke();
-  c.fillStyle = base; head(0, 0, 0); c.fill();
-  // 漆面高光
-  c.strokeStyle = light; c.globalAlpha = alpha * 0.55; c.lineWidth = w * 0.42; path(-w * 0.12, -w * 0.16, cell * 0.12); c.stroke();
-  c.strokeStyle = '#FFFFFF'; c.globalAlpha = alpha * 0.55; c.lineWidth = w * 0.13; path(-w * 0.2, -w * 0.26, cell * 0.2); c.stroke();
-  c.globalAlpha = alpha * 0.5; c.fillStyle = '#FFFFFF';
-  c.beginPath(); c.arc(tip[0] - dx * cell * 0.2 - nx * cell * 0.06 - w * 0.1, tip[1] - dy * cell * 0.2 - ny * cell * 0.06 - w * 0.14, cell * 0.045, 0, Math.PI * 2); c.fill();
-  // 箭尾金环
-  c.globalAlpha = alpha; c.strokeStyle = '#F3D27E'; c.lineWidth = 2.5;
-  c.beginPath(); c.arc(pts[0][0], pts[0][1], w * 0.28, 0, Math.PI * 2); c.stroke();
+  var base = col;
+  if (flash > 0 && Math.sin(flash * 30) > 0) base = '#FF4A3A';
+  c.strokeStyle = base; c.lineWidth = w; path(); c.stroke();
+  c.fillStyle = base; c.lineWidth = Math.max(1, cell * 0.05); c.strokeStyle = base; head(0); c.fill(); c.stroke();
   c.restore();
 }
 
@@ -1615,10 +1932,12 @@ function drawHUD(c) {
     modal = { type: 'quit', t: 0 };
   });
   // 心
+  var hsp = Math.min(54, 162 / CFG.HEARTS), hsc = hsp / 54;
   for (var i = 0; i < CFG.HEARTS; i++) {
-    var hx = x + 118 + i * 54, hy = y + h / 2 - 23, im = i < st.hearts ? IMG.heart : null;
+    var hx = x + 118 + i * hsp, hy = y + h / 2 - 23, im = i < st.hearts ? IMG.heart : null;
     var ha = null; for (var k = 0; k < st.heartAnim.length; k++) if (st.heartAnim[k].i === i) ha = st.heartAnim[k];
     c.save();
+    if (hsc < 1) { c.translate(hx, hy + 23); c.scale(hsc, hsc); c.translate(-hx, -hy - 23); }
     if (!im) { c.globalAlpha = 0.25; if (IMG.heart) c.drawImage(IMG.heart, hx, hy, 48, 46); }
     if (ha) { var u = ha.t / 0.8; c.globalAlpha = 1 - u; c.translate(hx + 24, hy + 23); c.scale(1 + u * 0.8, 1 + u * 0.8); c.translate(-hx - 24, -hy - 23); if (IMG.heart) c.drawImage(IMG.heart, hx, hy, 48, 46); }
     else if (im) { var beat = i === st.hearts - 1 && st.hearts === 1 ? 1 + 0.08 * Math.sin(now * 8) : 1; c.translate(hx + 24, hy + 23); c.scale(beat, beat); c.drawImage(im, -24, -23, 48, 46); }
@@ -1754,7 +2073,7 @@ var MODALS = {
     var w = 580, h = 560, x = VW / 2 - w / 2, y = VH / 2 - h / 2;
     D.panel(c, x, y, w, h);
     D.text(c, '箭阵未破', VW / 2, y + 82, 60, '#7A2A1C', { title: true });
-    D.text(c, '三颗心已用尽，异兽仍被困阵中', VW / 2, y + 150, 28, '#6B4A26');
+    D.text(c, cnNum(CFG.HEARTS) + '颗心已用尽，异兽仍被困阵中', VW / 2, y + 150, 28, '#6B4A26');
     if (IMG.heart) { c.save(); c.globalAlpha = 0.85; c.drawImage(IMG.heart, VW / 2 - 50, y + 190, 100, 96); c.restore(); }
     D.text(c, '+1', VW / 2 + 70, y + 240, 44, '#C8372D', { title: true });
     mbtn(c, 'f-revive', VW / 2 - 210, y + 320, 420, 100, '看广告复活', 'jade', function () {
