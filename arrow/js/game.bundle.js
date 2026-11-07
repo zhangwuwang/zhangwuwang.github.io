@@ -56,6 +56,23 @@ module.exports = {
   MAX_ZOOM: 3,
   SLIDE_SPEED: 25, // 格/秒（最低速度；长线/远距离会自动加速，保证 0.75 秒内飞出）
   TOTAL_LEVELS: 500,
+  // ===== 每关倒计时（v3） =====
+  // 限时 = 取整到 5 秒( (基础 + 每条线秒数×线数 + 每轮秒数×移除轮数) × 关卡系数 )
+  TIMER_ENABLED: true,
+  TIMER_BASE: 30,            // 基础秒数
+  TIMER_PER_LINE: 2.0,       // 每条线（含思考）秒数
+  TIMER_PER_ROUND: 0.5,      // 每个“移除轮数”额外秒数（轮数越多越需要思考）
+  TIMER_ROUND_TO: 5,         // 取整粒度（秒）
+  TIMER_MIN: 45,             // 下限（第 1 关教学除外）
+  TIMER_TUTORIAL_SECONDS: 0, // 第 1 关教学：0 = 不计时
+  TIMER_GUARDIAN_MULT: 0.9,  // 守关关（每 10 关）稍紧
+  TIMER_REST_MULT: 1.0,      // 守关后的喘息关
+  TIMER_DAILY_MULT: 0.95,    // 每日挑战系数
+  TIMER_DAILY_SECONDS: 0,    // 每日挑战固定秒数（>0 时覆盖公式）
+  TIMER_INTRO_SECONDS: 3,    // 进关后若不点击，3 秒后自动开始计时（首次点线会立即开始）
+  TIMER_WARN_SECONDS: 10,    // 最后 N 秒变红、跳动、每秒“嗒”一声
+  TIMER_REVIVE_SECONDS: 30,  // 看广告续时秒数
+  TIMER_REVIVES_PER_LEVEL: 2,// 每关最多续时次数
   // 7 日签到奖励
   CHECKIN: [
     { hint: 1 }, { remove: 1 }, { undo: 1 }, { hint: 2 },
@@ -675,7 +692,7 @@ P.loadFont = function (family, base) {
 };
 
 // ---------- 音频 ----------
-var SFX = ['pluck0', 'pluck1', 'pluck2', 'pluck3', 'pluck4', 'pluck5', 'pluck6', 'pluck7', 'hit', 'tap', 'win', 'fail', 'remove', 'unlock'];
+var SFX = ['pluck0', 'pluck1', 'pluck2', 'pluck3', 'pluck4', 'pluck5', 'pluck6', 'pluck7', 'hit', 'tap', 'win', 'fail', 'remove', 'unlock', 'tick'];
 var audio = { sfx: true, music: true };
 var ac = null, buffers = {}, bgmNode = null, bgmGain = null, wxPool = [], wxPoolI = 0, wxBgm = null;
 P.audioInit = function () {
@@ -727,7 +744,10 @@ P.vibrate = function () { if (isWx && wx.vibrateShort) { try { wx.vibrateShort({
 
 // ---------- 广告 ----------
 var placeholder = function (id) { return !id || /x{6,}|y{6,}/.test(id); };
-var rewarded = null, rewardCb = null, inter = null;
+var rewarded = null, rewardCb = null, inter = null, adOpen = 0;
+// 广告是否正在展示（倒计时据此暂停）
+P.adShowing = function () { return adOpen > 0; };
+P._setAdShowing = function (on) { adOpen = on ? 1 : 0; }; // 调试 / 测试用
 P.adsInit = function () {
   if (!isWx) return;
   if (wx.createRewardedVideoAd && !placeholder(CFG.AD_UNIT_REWARDED)) {
@@ -738,21 +758,24 @@ P.adsInit = function () {
   if (wx.createInterstitialAd && !placeholder(CFG.AD_UNIT_INTERSTITIAL)) {
     inter = wx.createInterstitialAd({ adUnitId: CFG.AD_UNIT_INTERSTITIAL });
     inter.onError(function () {});
+    try { inter.onClose(function () { adOpen = 0; }); } catch (e) {}
   }
 };
 // 返回 Promise<{ok:boolean, msg?:string}>
 P.showRewarded = function () {
   return new Promise(function (resolve) {
     if (!rewarded) { resolve({ ok: true, msg: '测试：模拟广告' }); return; }
-    rewardCb = function (ok) { resolve({ ok: ok, msg: ok ? '' : '完整观看后才能获得奖励' }); };
+    adOpen = 1;
+    rewardCb = function (ok) { adOpen = 0; resolve({ ok: ok, msg: ok ? '' : '完整观看后才能获得奖励' }); };
     rewarded.show().catch(function () {
-      rewarded.load().then(function () { return rewarded.show(); }).catch(function () { rewardCb = null; resolve({ ok: false, msg: '广告暂时无法播放，请稍后再试' }); });
+      rewarded.load().then(function () { return rewarded.show(); }).catch(function () { adOpen = 0; rewardCb = null; resolve({ ok: false, msg: '广告暂时无法播放，请稍后再试' }); });
     });
   });
 };
 P.showInterstitial = function () {
   if (!inter) return;
-  inter.show().catch(function () {});
+  adOpen = 1;
+  inter.show().catch(function () { adOpen = 0; });
 };
 P.share = function () {
   if (isWx && wx.shareAppMessage) wx.shareAppMessage({ title: CFG.SHARE_TITLE });
@@ -946,6 +969,63 @@ D.hand = function (c, x, y, s, t) {
 module.exports = D;
 
 };
+M["timer"]=function(module,exports,require){
+// 每关倒计时：限时公式 + 纯逻辑计时器（无平台依赖，可在 Node 里单测）
+var CFG = require('./config');
+
+function roundTo(x, k) { k = k || 5; return Math.round(x / k) * k; }
+
+// 第 n 关（或每日挑战 daily=日期字符串）的限时秒数；0 = 不计时
+function limitFor(board, n, daily) {
+  if (!CFG.TIMER_ENABLED) return 0;
+  if (!daily && n === 1) return CFG.TIMER_TUTORIAL_SECONDS || 0;
+  if (daily && CFG.TIMER_DAILY_SECONDS) return CFG.TIMER_DAILY_SECONDS;
+  var lines = board.segs.length, rounds = board.grade ? board.grade.layers || 0 : 0;
+  var raw = CFG.TIMER_BASE + CFG.TIMER_PER_LINE * lines + CFG.TIMER_PER_ROUND * rounds;
+  if (daily) raw *= CFG.TIMER_DAILY_MULT;
+  else if (n % 10 === 0 && n > 5) raw *= CFG.TIMER_GUARDIAN_MULT;
+  else if (n % 10 === 1 && n > 10) raw *= CFG.TIMER_REST_MULT;
+  return Math.max(CFG.TIMER_MIN || 0, roundTo(raw, CFG.TIMER_ROUND_TO));
+}
+
+function create(limit) {
+  return { limit: limit || 0, left: limit || 0, started: false, idle: 0, revives: 0, expired: false, lastSec: Math.ceil(limit || 0), elapsed: 0 };
+}
+function active(t) { return !!(t && t.limit > 0); }
+function start(t) { if (active(t) && !t.expired) t.started = true; }
+// 推进 dt 秒；paused 时完全不动。返回 { tick: 剩余整秒(最后 N 秒每秒一次) | null, expired: bool }
+function tick(t, dt, paused) {
+  var ev = { tick: null, expired: false };
+  if (!active(t) || t.expired || paused) return ev;
+  if (!t.started) {
+    t.idle += dt;
+    if (t.idle >= (CFG.TIMER_INTRO_SECONDS || 0)) t.started = true;
+    return ev;
+  }
+  t.left = Math.max(0, t.left - dt); t.elapsed += dt;
+  var sec = Math.ceil(t.left);
+  if (sec !== t.lastSec) {
+    if (sec < t.lastSec && sec > 0 && sec <= (CFG.TIMER_WARN_SECONDS || 10)) ev.tick = sec;
+    t.lastSec = sec;
+  }
+  if (t.left <= 0) { t.expired = true; ev.expired = true; }
+  return ev;
+}
+function canRevive(t) { return active(t) && t.revives < (CFG.TIMER_REVIVES_PER_LEVEL || 0); }
+function revive(t, sec) {
+  sec = sec == null ? CFG.TIMER_REVIVE_SECONDS : sec;
+  t.left += sec; t.expired = false; t.revives++; t.started = true; t.lastSec = Math.ceil(t.left);
+}
+function warn(t) { return active(t) && t.started && Math.ceil(t.left) <= (CFG.TIMER_WARN_SECONDS || 10); }
+function fmt(sec) {
+  sec = Math.max(0, Math.ceil(sec - 1e-6));
+  var m = Math.floor(sec / 60), s = sec % 60;
+  return (m < 10 ? '0' : '') + m + ':' + (s < 10 ? '0' : '') + s;
+}
+
+module.exports = { limitFor: limitFor, create: create, start: start, tick: tick, canRevive: canRevive, revive: revive, warn: warn, fmt: fmt, active: active };
+
+};
 M["main"]=function(module,exports,require){
 // 《山海一箭》主逻辑：场景、关卡玩法、UI
 var P = require('./platform');
@@ -953,6 +1033,7 @@ var CFG = require('./config');
 var G = require('./levelgen');
 var BEASTS = require('./beasts');
 var D = require('./draw');
+var T = require('./timer');
 
 var LW = 750, LH = 1334;
 var scr, ctx, S = 1, VW = LW, VH = LH, X0 = 0, SAFE_T = 0, SAFE_B = 0;
@@ -960,6 +1041,7 @@ var IMG = {}, BIMG = {}, BSIL = {};
 var save, scene = 'loading', modal = null, regions = [], pressedKey = null;
 var now = 0, last = 0, toasts = [], parts = [];
 var loadProgress = 0;
+var appHidden = false; // 切到后台（倒计时暂停）
 
 // 棋盘线色：国风粉彩，在墨青底上清晰可辨（朱砂、青瓷、碧玉、黛紫、赭石、桃夭、天青、缃黄）
 var COLORS = ['#F28B7D', '#9ED9C3', '#8CCB6E', '#AA9DF2', '#E8A956', '#F4A6C6', '#7FC1F2', '#F2D46A'];
@@ -1002,7 +1084,8 @@ function start() {
   P.adsInit(); P.setupShare();
   P.onPointers(onPtr);
   P.onWheel(onWheel);
-  P.onHide(function () { persist(); });
+  P.onHide(function () { appHidden = true; persist(); });
+  P.onShow(function () { appHidden = false; last = 0; });
   P.raf(frame);
   var total = IMAGES.length + BEASTS.length * 2 + 1, done = 0;
   function tick() { done++; loadProgress = done / total; }
@@ -1026,7 +1109,7 @@ function start() {
     if (m) { var wait = setInterval(function () { if (scene === 'menu') { clearInterval(wait); if (/unlock/.test(q)) save.maxCleared = Math.max(save.maxCleared, +m[1] - 1); startLevel(+m[1]); } }, 50); }
     var sc = /scene=(\w+)/.exec(q);
     if (sc) { var w2 = setInterval(function () { if (scene === 'menu') { clearInterval(w2); if (/unlock/.test(q)) save.maxCleared = Math.max(save.maxCleared, 60); if (sc[1] === 'codex') openCodex(); else if (sc[1] === 'levels') openLevels(); } }, 50); }
-    if (typeof window !== 'undefined') window.__game = { startLevel: startLevel, state: function () { return st; }, save: function () { return save; }, autoSolve: autoSolveStep, tap: function (i) { tapSeg(i); }, blocked: function () { for (var i = 0; i < st.board.segs.length; i++) if (st.alive[i] && !st.anims[i] && !G.isFree(st.board, st.occ, i)) return i; return -1; }, cellPx: function (x, y) { var p = cellPx(x, y); return [p[0] * S, p[1] * S]; }, openBeast: function (i) { openBeast(BEASTS[i]); }, openSettings: openSettings, openDaily: openDaily, hint: function () { doHint(); }, scene: function () { return scene; }, modal: function () { return modal; }, openCodex: openCodex, openCheckin: openCheckin, view: function () { return { z: VZ.z, px: VZ.px, py: VZ.py, vp: VP }; }, zoomAt: function (z, x, y) { zoomAt(z, x / S, y / S); }, panTo: function (cx, cy) { panToCell(cx, cy); } };
+    if (typeof window !== 'undefined') window.__game = { startLevel: startLevel, state: function () { return st; }, save: function () { return save; }, autoSolve: autoSolveStep, tap: function (i) { tapSeg(i); }, blocked: function () { for (var i = 0; i < st.board.segs.length; i++) if (st.alive[i] && !st.anims[i] && !G.isFree(st.board, st.occ, i)) return i; return -1; }, cellPx: function (x, y) { var p = cellPx(x, y); return [p[0] * S, p[1] * S]; }, openBeast: function (i) { openBeast(BEASTS[i]); }, openSettings: openSettings, openDaily: openDaily, hint: function () { doHint(); }, scene: function () { return scene; }, modal: function () { return modal; }, openCodex: openCodex, openCheckin: openCheckin, view: function () { return { z: VZ.z, px: VZ.px, py: VZ.py, vp: VP }; }, zoomAt: function (z, x, y) { zoomAt(z, x / S, y / S); }, panTo: function (cx, cy) { panToCell(cx, cy); }, timer: function () { return st && st.timer; }, timerPaused: function () { return timerPaused(); }, setHidden: function (h) { appHidden = !!h; }, setAdShowing: function (on) { P._setAdShowing(on); }, setTimeLeft: function (sec) { if (st && st.timer) { st.timer.left = sec; st.timer.started = true; st.timer.lastSec = Math.ceil(sec); } }, openQuit: function () { modal = { type: 'quit', t: 0 }; }, closeModal: function () { modal = null; }, limitFor: function (n) { return T.limitFor(G.getLevel(n), n); }, limitDaily: function (d) { return T.limitFor(G.getDaily(d), 0, d); } };
   }
 }
 
@@ -1409,6 +1492,7 @@ function startLevel(n, daily) {
     tut: n === 1 && !daily ? 0 : -1, flash: {}, shakeT: 0, heartAnim: [], startT: now, ver: 0, tapHL: null
   };
   st.occ = G.buildOcc(board, st.alive);
+  st.timer = T.create(T.limitFor(board, n, daily));
   modal = null; scene = 'play'; boardCache = null; parts = [];
   computeBoardLayout(); setView(1, 0, 0); lineCache = null;
   if (!daily && n === 2) toast('撞到其他线会失去 1 颗心');
@@ -1546,6 +1630,7 @@ function distSeg(px, py, ax, ay, bx, by) {
 }
 
 function tapSeg(i) {
+  T.start(st.timer);
   var b = st.board, seg = b.segs[i], ray = G.rayCells(b.w, b.h, seg.cells);
   var blockAt = -1;
   for (var r = 0; r < ray.length; r++) if (st.occ[ray[r]] >= 0) { blockAt = r; break; }
@@ -1621,6 +1706,12 @@ function updatePlay(dt) {
       if (a.t > 0.5) delete st.anims[key];
     }
   }
+  // 倒计时
+  if (T.active(st.timer)) {
+    var tev = T.tick(st.timer, dt, timerPaused());
+    if (tev.tick) P.play('tick', 0.45);
+    if (tev.expired) timeUp();
+  }
   // 胜利判定
   if (!st.won && !st.failed && st.removedCount === st.board.segs.length && Object.keys(st.anims).length === 0) win();
   if (st.won) {
@@ -1635,6 +1726,7 @@ function updatePlay(dt) {
 }
 
 function loseHeart() {
+  if (st.failed || st.won) return; // 已判负（时间到 / 心已用尽）后，飞行中的撞击不再扣心
   if (st.n === 1 && !st.daily) { toast('被挡住了！先让前面的箭飞走'); return; }
   st.hearts--; st.misses++;
   st.heartAnim.push({ i: st.hearts, t: 0 });
@@ -1644,6 +1736,20 @@ function loseHeart() {
   }
 }
 
+// 倒计时暂停条件：后台、广告、任何弹窗（暂停/设置/图鉴详情/菜单）、胜负已定、最后几支箭正在飞出
+function timerPaused() {
+  return appHidden || P.adShowing() || !!modal || scene !== 'play' || !st || st.won || st.failed || st.removedCount === st.board.segs.length;
+}
+function timeUp() {
+  st.failed = true; st.timeUp = true; st.hint = -1; st.removeMode = false;
+  if (save.vib) P.vibrate();
+  setTimeout(function () { if (st && st.timeUp && st.failed && scene === 'play') { P.play('fail'); modal = { type: 'timeup', t: 0 }; } }, 450);
+}
+function reviveTime() {
+  T.revive(st.timer, CFG.TIMER_REVIVE_SECONDS);
+  st.failed = false; st.timeUp = false; modal = null;
+  floatText([VW / 2, SAFE_T + 160], '+' + CFG.TIMER_REVIVE_SECONDS + '秒', '#9EF0C0', 52);
+}
 function win() {
   st.won = true; st.winT = 0; st.hint = -1;
   P.play('win');
@@ -1976,10 +2082,50 @@ function drawHUD(c) {
   if (st.n === 1 && st.tut === 1) sub = '被挡住的箭飞不出去，要先清开前路';
   if (st.n === 1 && st.tut === 2) sub = '最后一支，点它！';
   if (st.removeMode) sub = '点选一支要去除的箭（点空白处取消）';
-  var sy = y + h + 34;
-  c.font = '700 28px ' + D.FONT_T; var tw = c.measureText(sub).width + 60;
-  D.rr(c, VW / 2 - tw / 2, sy - 24, tw, 48, 24); c.fillStyle = st.removeMode ? 'rgba(126,26,19,0.85)' : 'rgba(70,40,15,0.72)'; c.fill();
-  D.text(c, sub, VW / 2, sy + 1, 28, '#FBEBC4', { title: true });
+  var sy = y + h + 34, cx0 = VW / 2, maxW = LW - 40, fs = 28;
+  if (T.active(st.timer)) {
+    var tw0 = drawTimer(c, X0 + 18, sy);
+    var l = X0 + 18 + tw0 + 12, r = X0 + LW - 18; cx0 = (l + r) / 2; maxW = r - l;
+  }
+  c.font = '700 ' + fs + 'px ' + D.FONT_T; var tw = c.measureText(sub).width + 50;
+  while (tw > maxW && fs > 20) { fs -= 2; c.font = '700 ' + fs + 'px ' + D.FONT_T; tw = c.measureText(sub).width + 44; }
+  tw = Math.min(tw, maxW);
+  D.rr(c, cx0 - tw / 2, sy - 24, tw, 48, 24); c.fillStyle = st.removeMode ? 'rgba(126,26,19,0.85)' : 'rgba(70,40,15,0.72)'; c.fill();
+  D.text(c, sub, cx0, sy + 1, fs, '#FBEBC4', { title: true });
+}
+
+// 倒计时：沙漏圆钮 + mm:ss + 细进度条（最后 10 秒变红、跳动）
+function drawTimer(c, x, cy) {
+  var t = st.timer, W = 236, H = 48, ratio = t.limit ? Math.max(0, Math.min(1, t.left / t.limit)) : 0;
+  var warn = T.warn(t) && !st.won, low = ratio < 0.3;
+  var pulse = warn ? 1 + 0.07 * Math.max(0, Math.sin((t.left % 1) * Math.PI)) : 1;
+  c.save();
+  c.translate(x + W / 2, cy); c.scale(pulse, pulse); c.translate(-x - W / 2, -cy);
+  D.rr(c, x, cy - H / 2, W, H, H / 2);
+  c.fillStyle = warn ? 'rgba(150,28,18,0.92)' : 'rgba(70,40,15,0.78)'; c.fill();
+  c.lineWidth = 2.5; c.strokeStyle = warn ? '#FFB199' : '#D4A443'; c.stroke();
+  // 表盘
+  var ix = x + 26, iy = cy;
+  c.beginPath(); c.arc(ix, iy, 15, 0, Math.PI * 2); c.fillStyle = warn ? '#FFE3D6' : '#FBE6B0'; c.fill();
+  c.lineWidth = 2; c.strokeStyle = warn ? '#7A1A10' : '#6B4515'; c.stroke();
+  // 剩余扇形
+  if (ratio > 0) { c.beginPath(); c.moveTo(ix, iy); c.arc(ix, iy, 11, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * ratio); c.closePath(); c.fillStyle = warn ? '#D93A2B' : (low ? '#D9922B' : '#3F8A62'); c.fill(); }
+  // 数字
+  var col = warn ? '#FFFFFF' : (t.started ? '#FBEBC4' : 'rgba(251,235,196,0.75)');
+  D.text(c, T.fmt(t.left), x + 88, cy + 1, 30, col, { weight: '800' });
+  // 细进度条
+  var bx = x + 134, bw = W - 134 - 18, bh = 8;
+  D.rr(c, bx, cy - bh / 2, bw, bh, bh / 2); c.fillStyle = 'rgba(0,0,0,0.35)'; c.fill();
+  if (ratio > 0.005) {
+    D.rr(c, bx, cy - bh / 2, Math.max(bh, bw * ratio), bh, bh / 2);
+    var g = c.createLinearGradient(0, cy - bh / 2, 0, cy + bh / 2);
+    if (warn) { g.addColorStop(0, '#FF8A7A'); g.addColorStop(1, '#C8261B'); }
+    else if (low) { g.addColorStop(0, '#F7CF7A'); g.addColorStop(1, '#C47E1E'); }
+    else { g.addColorStop(0, '#B4E8C8'); g.addColorStop(1, '#3F8A62'); }
+    c.fillStyle = g; c.fill();
+  }
+  c.restore();
+  return W;
 }
 
 function openBeastPeek(b) {
@@ -2029,7 +2175,8 @@ function closeX(c, x, y) {
 
 var MODALS = {
   win: function (c) {
-    var w = 600, h = 560 + (st.unlock ? 280 : 0) + (st.dailyReward ? 60 : 0), x = VW / 2 - w / 2, y = VH / 2 - h / 2;
+    var tinfo = T.active(st.timer) ? 44 : 0;
+    var w = 600, h = 560 + tinfo + (st.unlock ? 280 : 0) + (st.dailyReward ? 60 : 0), x = VW / 2 - w / 2, y = VH / 2 - h / 2;
     D.panel(c, x, y, w, h);
     var title = st.daily ? '每日挑战完成' : (st.n % 10 === 0 ? '守关告捷' : '破阵成功');
     D.text(c, title, VW / 2, y + 78, 60, '#7A2A1C', { title: true, shadow: 'rgba(212,164,67,0.6)', sy: 3 });
@@ -2044,6 +2191,11 @@ var MODALS = {
       }
     }
     var yy = y + 330;
+    if (tinfo) {
+      var tm = st.timer;
+      D.text(c, '用时 ' + T.fmt(tm.elapsed) + ' · 剩余 ' + T.fmt(tm.left), VW / 2, y + 330, 28, tm.left <= (CFG.TIMER_WARN_SECONDS || 10) ? '#C8372D' : '#2C5B44', { title: true });
+      yy += tinfo + 10;
+    }
     if (st.dailyReward) { D.text(c, '首次完成奖励：提示 ×1', VW / 2, yy, 30, '#2C5B44', { title: true }); yy += 60; }
     if (st.unlock) {
       var b = st.unlock, im = BIMG[b.id];
@@ -2084,6 +2236,35 @@ var MODALS = {
     }, { size: 40 });
     mbtn(c, 'f-retry', VW / 2 - 210, y + 446, 200, 76, '重新开始', 'red', function () { startLevel(st.n, st.daily); }, { size: 30 });
     mbtn(c, 'f-home', VW / 2 + 10, y + 446, 200, 76, '返回主页', 'wood', function () { modal = null; scene = 'menu'; }, { size: 30 });
+  },
+  timeup: function (c) {
+    var t = st.timer, can = T.canRevive(t), left = (CFG.TIMER_REVIVES_PER_LEVEL || 0) - t.revives;
+    var w = 580, h = 600, x = VW / 2 - w / 2, y = VH / 2 - h / 2;
+    D.panel(c, x, y, w, h);
+    D.text(c, '时间到', VW / 2, y + 84, 64, '#7A2A1C', { title: true, shadow: 'rgba(212,164,67,0.6)', sy: 3 });
+    D.text(c, '沙漏已尽，还剩 ' + st.alive.filter(Boolean).length + ' 支箭未破', VW / 2, y + 150, 28, '#6B4A26');
+    // 沙漏
+    var hx = VW / 2 - (can ? 60 : 0), hy = y + 245, k = 1 + 0.04 * Math.sin(now * 5);
+    c.save(); c.translate(hx, hy); c.scale(k, k);
+    c.fillStyle = '#7A4A1C'; D.rr(c, -46, -62, 92, 12, 6); c.fill(); D.rr(c, -46, 50, 92, 12, 6); c.fill();
+    c.beginPath(); c.moveTo(-36, -50); c.lineTo(36, -50); c.lineTo(6, 0); c.lineTo(36, 50); c.lineTo(-36, 50); c.lineTo(-6, 0); c.closePath();
+    c.fillStyle = 'rgba(255,248,230,0.85)'; c.fill(); c.lineWidth = 3; c.strokeStyle = '#B4832E'; c.stroke();
+    c.beginPath(); c.moveTo(-30, 46); c.lineTo(30, 46); c.lineTo(0, 16); c.closePath(); c.fillStyle = '#D9A441'; c.fill();
+    c.restore();
+    if (can) D.text(c, '+' + CFG.TIMER_REVIVE_SECONDS + '秒', VW / 2 + 70, hy + 4, 50, '#2C7A55', { title: true });
+    if (can) {
+      mbtn(c, 'tu-revive', VW / 2 - 220, y + 340, 440, 104, '看广告 +' + CFG.TIMER_REVIVE_SECONDS + '秒 继续', 'jade', function () {
+        P.showRewarded().then(function (r) {
+          if (r.msg) toast(r.msg);
+          if (r.ok && st && st.timeUp) reviveTime();
+        });
+      }, { size: 36 });
+      D.text(c, '本关还可续时 ' + left + ' 次', VW / 2, y + 470, 24, '#8A6214');
+    } else {
+      D.text(c, '本关续时次数已用完', VW / 2, y + 390, 30, '#8A6214', { title: true });
+    }
+    mbtn(c, 'tu-retry', VW / 2 - 210, y + 498, 200, 76, '重来', 'red', function () { startLevel(st.n, st.daily); }, { size: 34 });
+    mbtn(c, 'tu-home', VW / 2 + 10, y + 498, 200, 76, '返回主页', 'wood', function () { modal = null; scene = 'menu'; }, { size: 30 });
   },
   ad: function (c) {
     var w = 560, h = 470, x = VW / 2 - w / 2, y = VH / 2 - h / 2, kind = modal.kind;
